@@ -1,0 +1,15 @@
+services:
+  saas-agent:
+    image: ghcr.io/ooops404/saas-platform-agent:latest
+    container_name: saas_agent
+    restart: unless-stopped
+    environment:
+      GATEWAY_URL: wss://api.your-platform.com/agent/ws
+      TOKEN: <paste-token-from-dashboard>
+      DATA_ROOT_PATH: /data/tenants
+      LOG_LEVEL: INFO
+    volumes:
+      # Docker socket — required for container management
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Tenant data directory — must match DATA_ROOT_PATH
+      - /data/tenants:/data/tenants
