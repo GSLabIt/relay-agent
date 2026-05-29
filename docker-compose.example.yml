@@ -1,6 +1,6 @@
 services:
   saas-agent:
-    image: ghcr.io/ooops404/saas-platform-agent:latest
+    image: ghcr.io/gslabit/saas-platform-agent:latest
     container_name: saas_agent
     restart: unless-stopped
     environment:

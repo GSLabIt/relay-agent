@@ -20,6 +20,8 @@ class Config:
         self.reconnect_max_backoff = int(os.environ.get("RECONNECT_MAX_BACKOFF", "60"))
         self.command_timeout = float(os.environ.get("COMMAND_TIMEOUT", "120"))
         self.log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+        # Set SSL_VERIFY=false in dev when using self-signed certificates
+        self.ssl_verify = os.environ.get("SSL_VERIFY", "true").lower() != "false"
 
 
 def _require(key: str) -> str:

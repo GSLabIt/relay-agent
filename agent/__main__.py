@@ -32,6 +32,9 @@ def main() -> None:
         logger.critical("Cannot connect to Docker daemon: %s", exc)
         sys.exit(1)
 
+    if not cfg.ssl_verify:
+        logger.warning("SSL verification disabled — only use in development")
+
     asyncio.run(
         gateway.run(
             gateway_url=cfg.gateway_url,
@@ -39,6 +42,7 @@ def main() -> None:
             executor=executor,
             max_backoff=cfg.reconnect_max_backoff,
             command_timeout=cfg.command_timeout,
+            ssl_verify=cfg.ssl_verify,
         )
     )
 

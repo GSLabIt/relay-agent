@@ -1,7 +1,7 @@
 # SaaS Platform Agent
 
 Lightweight agent that runs on your own server and connects it to the
-[SaaS Platform](https://github.com/ooops404/saas-platform) control plane.
+[SaaS Platform](https://github.com/gslabit/saas-platform) control plane.
 
 ## How it works
 
@@ -53,7 +53,7 @@ docker run -d \
   -e GATEWAY_URL=wss://api.your-platform.com/agent/ws \
   -e TOKEN=<your-token> \
   -e DATA_ROOT_PATH=/data/tenants \
-  ghcr.io/ooops404/saas-platform-agent:latest
+  ghcr.io/gslabit/saas-platform-agent:latest
 ```
 
 ### Docker Compose
@@ -122,7 +122,7 @@ The agent speaks a simple JSON protocol over WebSocket:
 ## Development
 
 ```bash
-git clone https://github.com/ooops404/saas-platform-agent
+git clone https://github.com/gslabit/saas-platform-agent
 cd saas-platform-agent
 
 python3 -m venv .venv && source .venv/bin/activate

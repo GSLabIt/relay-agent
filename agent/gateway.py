@@ -37,16 +37,30 @@ async def run(
     executor: Executor,
     max_backoff: int = 60,
     command_timeout: float = 120.0,
+    ssl_verify: bool = True,
 ) -> None:
     """Connect to the gateway and handle messages, reconnecting on failure."""
+    import ssl as _ssl
+
     url = f"{gateway_url}?token={token}"
     backoff = 2
+
+    # Build SSL context — disable verification only for dev (self-signed certs)
+    ssl_ctx: _ssl.SSLContext | bool | None = None
+    if url.startswith("wss://"):
+        if ssl_verify:
+            ssl_ctx = _ssl.create_default_context()
+        else:
+            ssl_ctx = _ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = _ssl.CERT_NONE
 
     while True:
         try:
             logger.info("Connecting to gateway: %s", gateway_url)
             async with websockets.connect(
                 url,
+                ssl=ssl_ctx,
                 max_size=16 * 1024 * 1024,  # 16MB for large log payloads
                 ping_interval=30,
                 ping_timeout=10,
