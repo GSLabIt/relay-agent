@@ -8,6 +8,7 @@ from typing import Any
 import docker
 
 from agent.commands.container import ContainerCommands
+from agent.commands.instance import InstanceCommands
 from agent.commands.system import SystemCommands
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ class Executor:
     def __init__(self, data_root_path: str) -> None:
         self._docker = docker.from_env()
         self._container = ContainerCommands(self._docker, data_root_path)
+        self._instance = InstanceCommands(self._docker, data_root_path)
         self._system = SystemCommands(self._docker)
 
     def docker_version(self) -> str:
@@ -39,21 +41,28 @@ class Executor:
             return {}
 
         parts = method.split(".")
-        if len(parts) < 3 or parts[0] != "docker":
+        if len(parts) < 3:
             raise ValueError(f"Unknown method: {method!r}")
 
-        namespace, resource, action = parts[0], parts[1], parts[2]
+        ns, resource, action = parts[0], parts[1], parts[2]
 
-        if resource == "container":
-            handler = getattr(self._container, action, None)
+        if ns == "docker":
+            if resource == "container":
+                handler = getattr(self._container, action, None)
+                if handler is None:
+                    raise ValueError(f"Unknown container command: {action!r}")
+                return handler(params)
+
+            if resource == "system":
+                handler = getattr(self._system, action, None)
+                if handler is None:
+                    raise ValueError(f"Unknown system command: {action!r}")
+                return handler(params)
+
+        if ns == "saas" and resource == "instance":
+            handler = getattr(self._instance, action, None)
             if handler is None:
-                raise ValueError(f"Unknown container command: {action!r}")
+                raise ValueError(f"Unknown instance command: {action!r}")
             return handler(params)
 
-        if resource == "system":
-            handler = getattr(self._system, action, None)
-            if handler is None:
-                raise ValueError(f"Unknown system command: {action!r}")
-            return handler(params)
-
-        raise ValueError(f"Unknown resource: {resource!r}")
+        raise ValueError(f"Unknown method: {method!r}")
