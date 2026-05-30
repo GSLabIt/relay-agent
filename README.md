@@ -27,10 +27,12 @@ leaves your server.
 
 | What the agent can do | What the agent cannot do |
 |---|---|
-| Create/stop/remove containers | Access your host filesystem directly |
-| Read container logs and stats | Run arbitrary shell commands on the host |
-| Pull Docker images | Modify system configuration |
-| List containers on the Docker socket | Access data outside DATA_ROOT_PATH |
+| Create/stop/remove containers | Run arbitrary shell commands on the host |
+| Read container logs and stats | Modify system configuration |
+| Pull Docker images | Access host filesystem outside DATA_ROOT_PATH |
+| Run commands inside tenant containers (`exec_run`) | Access other tenant data |
+| Write files within DATA_ROOT_PATH (tenant data) | |
+| List containers on the Docker socket | |
 
 - **Token-based auth**: each server gets a unique revocable token
 - **Open source**: this code is auditable — no hidden behaviour
@@ -117,7 +119,13 @@ The agent speaks a simple JSON protocol over WebSocket:
 | `docker.container.logs` | Container log lines |
 | `docker.container.stats` | CPU/RAM/network/disk metrics |
 | `docker.container.list` | List containers |
-| `docker.container.exec_run` | Run command inside container |
+| `docker.container.exec_run` | Run a command inside a running container (`environment` dict supported) |
+| `docker.image.extract_file` | Read a file from a Docker image via a disposable container |
+| `fs.write_text` | Write a UTF-8 text file at a path inside DATA_ROOT_PATH |
+| `fs.write_bytes` | Write/append binary data (base64-encoded) — use for chunked uploads |
+| `fs.mkdir` | Create a directory inside DATA_ROOT_PATH |
+| `saas.instance.provision` | High-level: create dirs + write config + pull image + spawn container |
+| `saas.instance.deprovision` | Stop and remove instance container + cloudflared sidecar |
 
 ## Development
 

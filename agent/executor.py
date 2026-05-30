@@ -8,6 +8,8 @@ from typing import Any
 import docker
 
 from agent.commands.container import ContainerCommands
+from agent.commands.fs import FsCommands
+from agent.commands.image import ImageCommands
 from agent.commands.instance import InstanceCommands
 from agent.commands.system import SystemCommands
 
@@ -20,6 +22,8 @@ class Executor:
         self._container = ContainerCommands(self._docker, data_root_path)
         self._instance = InstanceCommands(self._docker, data_root_path)
         self._system = SystemCommands(self._docker)
+        self._fs = FsCommands()
+        self._image = ImageCommands(self._docker)
 
     def docker_version(self) -> str:
         try:
@@ -53,6 +57,12 @@ class Executor:
                     raise ValueError(f"Unknown container command: {action!r}")
                 return handler(params)
 
+            if resource == "image":
+                handler = getattr(self._image, action, None)
+                if handler is None:
+                    raise ValueError(f"Unknown image command: {action!r}")
+                return handler(params)
+
             if resource == "system":
                 handler = getattr(self._system, action, None)
                 if handler is None:
@@ -63,6 +73,12 @@ class Executor:
             handler = getattr(self._instance, action, None)
             if handler is None:
                 raise ValueError(f"Unknown instance command: {action!r}")
+            return handler(params)
+
+        if ns == "fs":
+            handler = getattr(self._fs, action, None)
+            if handler is None:
+                raise ValueError(f"Unknown fs command: {action!r}")
             return handler(params)
 
         raise ValueError(f"Unknown method: {method!r}")

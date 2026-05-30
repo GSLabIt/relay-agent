@@ -182,8 +182,12 @@ class ContainerCommands:
         """Run a one-shot command inside a running container."""
         name_or_id = params["name_or_id"]
         cmd = params["cmd"]
-        workdir = params.get("workdir")
-        result = self._get(name_or_id).exec_run(cmd, workdir=workdir)
+        kwargs: dict = {}
+        if params.get("workdir") is not None:
+            kwargs["workdir"] = params["workdir"]
+        if params.get("environment"):
+            kwargs["environment"] = params["environment"]
+        result = self._get(name_or_id).exec_run(cmd, **kwargs)
         return {
             "exit_code": result.exit_code,
             "output": result.output.decode("utf-8", errors="replace") if result.output else "",
