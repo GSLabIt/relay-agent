@@ -22,7 +22,7 @@ class Executor:
         self._container = ContainerCommands(self._docker, data_root_path)
         self._instance = InstanceCommands(self._docker, data_root_path)
         self._system = SystemCommands(self._docker)
-        self._fs = FsCommands()
+        self._fs = FsCommands(data_root_path)
         self._image = ImageCommands(self._docker)
 
     def docker_version(self) -> str:
