@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -82,3 +83,17 @@ class Executor:
             return handler(params)
 
         raise ValueError(f"Unknown method: {method!r}")
+
+    def run_pty_blocking(
+        self,
+        name_or_id: str,
+        cols: int,
+        rows: int,
+        stdin_q: Any,
+        loop: asyncio.AbstractEventLoop,
+        data_cb: Any,
+    ) -> int:
+        """Blocking PTY session inside a container. Delegates to ContainerCommands."""
+        return self._container.run_pty_blocking(
+            name_or_id, cols, rows, stdin_q, loop, data_cb
+        )
