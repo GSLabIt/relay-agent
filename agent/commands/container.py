@@ -192,3 +192,108 @@ class ContainerCommands:
             "exit_code": result.exit_code,
             "output": result.output.decode("utf-8", errors="replace") if result.output else "",
         }
+
+    def run_pty_blocking(
+        self,
+        name_or_id: str,
+        cols: int,
+        rows: int,
+        stdin_q: Any,
+        loop: Any,
+        data_cb: Any,
+    ) -> int:
+        """Run an interactive PTY inside a container. Blocks until the process exits.
+
+        stdin_q is a threading.Queue receiving tuples:
+          ("data",  bytes)           — stdin bytes to forward
+          ("resize", cols, rows)     — terminal resize
+          ("close",)                 — graceful shutdown
+
+        data_cb is an async callable(bytes) scheduled on *loop* via
+        asyncio.run_coroutine_threadsafe.
+
+        Returns the exit code of the container process.
+        """
+        import asyncio
+        import queue
+        import select as _select
+        import threading
+
+        container = self._get(name_or_id)
+        exec_resp = self._docker.api.exec_create(
+            container.id,
+            ["sh", "-c", "bash || sh"],
+            tty=True,
+            stdin=True,
+            stdout=True,
+            stderr=True,
+        )
+        exec_id: str = exec_resp["Id"]
+
+        sock_wrapper = self._docker.api.exec_start(exec_id, tty=True, socket=True)
+        self._docker.api.exec_resize(exec_id, height=rows, width=cols)
+
+        # Unwrap the underlying socket for non-blocking select/recv/sendall.
+        raw_sock = getattr(sock_wrapper, "_sock", sock_wrapper)
+        raw_sock.setblocking(False)
+
+        stop_event = threading.Event()
+
+        def _reader() -> None:
+            try:
+                while not stop_event.is_set():
+                    r, _, _ = _select.select([raw_sock], [], [], 0.05)
+                    if r:
+                        try:
+                            chunk = raw_sock.recv(4096)
+                        except BlockingIOError:
+                            continue
+                        except Exception:
+                            break
+                        if not chunk:
+                            break
+                        asyncio.run_coroutine_threadsafe(data_cb(chunk), loop)
+            except Exception:
+                logger.debug("PTY reader exited for %s", name_or_id)
+            finally:
+                stop_event.set()
+
+        reader_thread = threading.Thread(target=_reader, daemon=True)
+        reader_thread.start()
+
+        exit_code = 0
+        try:
+            while not stop_event.is_set():
+                try:
+                    item = stdin_q.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                kind = item[0]
+                if kind == "data":
+                    try:
+                        raw_sock.sendall(item[1])
+                    except Exception:
+                        break
+                elif kind == "resize":
+                    _, new_cols, new_rows = item
+                    try:
+                        self._docker.api.exec_resize(exec_id, height=new_rows, width=new_cols)
+                    except Exception:
+                        pass
+                elif kind == "close":
+                    break
+        finally:
+            stop_event.set()
+            try:
+                sock_wrapper.close()
+            except Exception:
+                pass
+            reader_thread.join(timeout=2.0)
+
+        try:
+            info = self._docker.api.exec_inspect(exec_id)
+            exit_code = info.get("ExitCode") or 0
+        except Exception:
+            pass
+
+        return exit_code
