@@ -4,3 +4,5 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+# E501 is handled by ruff-format where possible; long strings/comments are left as-is
+extend-ignore = ["E501"]

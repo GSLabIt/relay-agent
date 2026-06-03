@@ -69,7 +69,9 @@ class ContainerCommands:
             run_kwargs["platform"] = platform
 
         container = self._docker.containers.run(**run_kwargs)
-        logger.info("Container started: %s (%s)", container.name, container.short_id)
+        logger.info(
+            "Container started: %s (%s)", container.name, container.short_id
+        )
         return {"container_id": container.id, "short_id": container.short_id}
 
     def stop(self, params: dict) -> dict:
@@ -107,7 +109,9 @@ class ContainerCommands:
         tail = params.get("tail", 200)
         timestamps = params.get("timestamps", True)
         raw = self._get(name_or_id).logs(tail=tail, timestamps=timestamps)
-        lines = _ANSI_RE.sub("", raw.decode("utf-8", errors="replace")).splitlines()
+        lines = _ANSI_RE.sub(
+            "", raw.decode("utf-8", errors="replace")
+        ).splitlines()
         return {"lines": lines}
 
     def stats(self, params: dict) -> dict:
@@ -119,13 +123,15 @@ class ContainerCommands:
             raw["cpu_stats"]["cpu_usage"]["total_usage"]
             - raw["precpu_stats"]["cpu_usage"]["total_usage"]
         )
-        sys_delta = raw["cpu_stats"].get("system_cpu_usage", 0) - raw["precpu_stats"].get(
-            "system_cpu_usage", 0
-        )
+        sys_delta = raw["cpu_stats"].get("system_cpu_usage", 0) - raw[
+            "precpu_stats"
+        ].get("system_cpu_usage", 0)
         num_cpus = raw["cpu_stats"].get("online_cpus") or len(
             raw["cpu_stats"]["cpu_usage"].get("percpu_usage") or [1]
         )
-        cpu_percent = (cpu_delta / sys_delta * num_cpus * 100.0) if sys_delta > 0 else 0.0
+        cpu_percent = (
+            (cpu_delta / sys_delta * num_cpus * 100.0) if sys_delta > 0 else 0.0
+        )
 
         # Memory
         mem = raw.get("memory_stats", {})
@@ -140,7 +146,9 @@ class ContainerCommands:
 
         # Block I/O
         blk_read = blk_write = 0.0
-        for entry in raw.get("blkio_stats", {}).get("io_service_bytes_recursive") or []:
+        for entry in (
+            raw.get("blkio_stats", {}).get("io_service_bytes_recursive") or []
+        ):
             if entry.get("op") == "read":
                 blk_read += entry.get("value", 0)
             elif entry.get("op") == "write":
@@ -151,7 +159,9 @@ class ContainerCommands:
             "cpu_percent": round(cpu_percent, 2),
             "mem_usage_mb": round(mem_usage / MB, 2),
             "mem_limit_mb": round(mem_limit / MB, 2),
-            "mem_percent": round(mem_usage / mem_limit * 100, 2) if mem_limit else 0.0,
+            "mem_percent": round(mem_usage / mem_limit * 100, 2)
+            if mem_limit
+            else 0.0,
             "net_rx_mb": round(net_rx / MB, 4),
             "net_tx_mb": round(net_tx / MB, 4),
             "blk_read_mb": round(blk_read / MB, 4),
@@ -164,7 +174,9 @@ class ContainerCommands:
         filters: dict = {}
         if label_filter:
             filters["label"] = label_filter
-        containers = self._docker.containers.list(all=all_containers, filters=filters)
+        containers = self._docker.containers.list(
+            all=all_containers, filters=filters
+        )
         return {
             "containers": [
                 {
@@ -172,7 +184,9 @@ class ContainerCommands:
                     "short_id": c.short_id,
                     "name": c.name,
                     "status": c.status,
-                    "image": c.image.tags[0] if c.image.tags else c.image.short_id,
+                    "image": c.image.tags[0]
+                    if c.image.tags
+                    else c.image.short_id,
                 }
                 for c in containers
             ]
@@ -190,7 +204,9 @@ class ContainerCommands:
         result = self._get(name_or_id).exec_run(cmd, **kwargs)
         return {
             "exit_code": result.exit_code,
-            "output": result.output.decode("utf-8", errors="replace") if result.output else "",
+            "output": result.output.decode("utf-8", errors="replace")
+            if result.output
+            else "",
         }
 
     def run_pty_blocking(
@@ -230,7 +246,9 @@ class ContainerCommands:
         )
         exec_id: str = exec_resp["Id"]
 
-        sock_wrapper = self._docker.api.exec_start(exec_id, tty=True, socket=True)
+        sock_wrapper = self._docker.api.exec_start(
+            exec_id, tty=True, socket=True
+        )
         self._docker.api.exec_resize(exec_id, height=rows, width=cols)
 
         # Unwrap the underlying socket for non-blocking select/recv/sendall.
@@ -277,7 +295,9 @@ class ContainerCommands:
                 elif kind == "resize":
                     _, new_cols, new_rows = item
                     try:
-                        self._docker.api.exec_resize(exec_id, height=new_rows, width=new_cols)
+                        self._docker.api.exec_resize(
+                            exec_id, height=new_rows, width=new_cols
+                        )
                     except Exception:
                         pass
                 elif kind == "close":

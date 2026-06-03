@@ -8,9 +8,9 @@ import sys
 
 
 def main() -> None:
+    from agent import gateway
     from agent.config import Config
     from agent.executor import Executor
-    from agent import gateway
 
     cfg = Config()
 

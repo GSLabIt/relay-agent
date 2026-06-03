@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
-import shutil
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -70,21 +69,36 @@ class InstanceCommands:
         # 5. Build volumes (relative paths resolved by ContainerCommands._resolve_volumes,
         #    but here we build absolute paths directly since we know data_root_path)
         host_base = str(self._data_root / slug)
-        config_container_path = params.get("config_container_path", "/etc/odoo/odoo.conf")
+        config_container_path = params.get(
+            "config_container_path", "/etc/odoo/odoo.conf"
+        )
         volumes: dict[str, dict[str, str]] = {
-            f"{host_base}/filestore": {"bind": "/var/lib/odoo/filestore", "mode": "rw"},
-            f"{host_base}/sessions": {"bind": "/var/lib/odoo/sessions", "mode": "rw"},
+            f"{host_base}/filestore": {
+                "bind": "/var/lib/odoo/filestore",
+                "mode": "rw",
+            },
+            f"{host_base}/sessions": {
+                "bind": "/var/lib/odoo/sessions",
+                "mode": "rw",
+            },
             f"{host_base}/addons": {"bind": "/mnt/extra-addons", "mode": "rw"},
-            f"{host_base}/conf/odoo.conf": {"bind": config_container_path, "mode": "ro"},
+            f"{host_base}/conf/odoo.conf": {
+                "bind": config_container_path,
+                "mode": "ro",
+            },
         }
 
         # 6. Build labels (Traefik routing)
         container_name = f"saas_{slug}"
-        labels = self._build_traefik_labels(slug, container_name, network, domain)
+        labels = self._build_traefik_labels(
+            slug, container_name, network, domain
+        )
 
         # 7. Build environment
         extra_paths = params.get("extra_addons_paths") or []
-        addons_path = ",".join(extra_paths) if extra_paths else "/mnt/extra-addons"
+        addons_path = (
+            ",".join(extra_paths) if extra_paths else "/mnt/extra-addons"
+        )
         env = {
             "ADDONS_PATH": addons_path,
         }
@@ -99,7 +113,12 @@ class InstanceCommands:
         odoo_cmd = ["odoo"]
         _wait = 'until pg_isready -h "$HOST" -p "$PORT" -U "$USER" 2>/dev/null; do sleep 2; done'
         import shlex
-        command = ["sh", "-c", f"{_wait} && {' '.join(shlex.quote(a) for a in odoo_cmd)}"]
+
+        command = [
+            "sh",
+            "-c",
+            f"{_wait} && {' '.join(shlex.quote(a) for a in odoo_cmd)}",
+        ]
 
         run_kwargs: dict[str, Any] = {
             "image": image,
@@ -121,28 +140,44 @@ class InstanceCommands:
             run_kwargs["mem_limit"] = mem_limit
 
         container = self._docker.containers.run(**run_kwargs)
-        logger.info("Instance container started: %s (%s)", container.name, container.short_id)
+        logger.info(
+            "Instance container started: %s (%s)",
+            container.name,
+            container.short_id,
+        )
 
         # Cloudflare tunnel sidecar (if token provided) — provisioned separately
         cloudflared_id: str | None = None
         tunnel_token = params.get("tunnel_token")
         if tunnel_token:
-            cloudflared_id = self._spawn_cloudflared(slug, tunnel_token, network)
+            cloudflared_id = self._spawn_cloudflared(
+                slug, tunnel_token, network
+            )
 
-        return {"container_id": container.id, "cloudflared_container_id": cloudflared_id}
+        return {
+            "container_id": container.id,
+            "cloudflared_container_id": cloudflared_id,
+        }
 
     # ------------------------------------------------------------------
     # Deprovision
     # ------------------------------------------------------------------
 
     def deprovision(self, params: dict) -> dict:
-        slug = params["slug"]
-        for name_or_id in filter(None, [params.get("cloudflared_container_id"), params.get("container_id")]):
+        for name_or_id in filter(
+            None,
+            [
+                params.get("cloudflared_container_id"),
+                params.get("container_id"),
+            ],
+        ):
             try:
                 self._docker.containers.get(name_or_id).remove(force=True)
                 logger.info("Removed container %s", name_or_id)
             except Exception as exc:
-                logger.warning("Could not remove container %s: %s", name_or_id, exc)
+                logger.warning(
+                    "Could not remove container %s: %s", name_or_id, exc
+                )
         return {}
 
     # ------------------------------------------------------------------
@@ -156,7 +191,9 @@ class InstanceCommands:
             self._docker.networks.create(network, driver="bridge")
             logger.info("Created Docker network: %s", network)
 
-    def _build_traefik_labels(self, slug: str, container_name: str, network: str, domain: str) -> dict:
+    def _build_traefik_labels(
+        self, slug: str, container_name: str, network: str, domain: str
+    ) -> dict:
         host = f"{slug}.{domain}"
         router = f"saas-{slug}"
         return {
@@ -169,7 +206,9 @@ class InstanceCommands:
             "saas.managed": "true",
         }
 
-    def _spawn_cloudflared(self, slug: str, tunnel_token: str, network: str) -> str | None:
+    def _spawn_cloudflared(
+        self, slug: str, tunnel_token: str, network: str
+    ) -> str | None:
         try:
             cf_name = f"saas_{slug}_cloudflared"
             cf = self._docker.containers.run(
@@ -177,7 +216,13 @@ class InstanceCommands:
                 name=cf_name,
                 detach=True,
                 network=network,
-                command=["tunnel", "--no-autoupdate", "run", "--token", tunnel_token],
+                command=[
+                    "tunnel",
+                    "--no-autoupdate",
+                    "run",
+                    "--token",
+                    tunnel_token,
+                ],
                 restart_policy={"Name": "unless-stopped"},
                 labels={"saas.instance": slug, "saas.role": "cloudflared"},
             )

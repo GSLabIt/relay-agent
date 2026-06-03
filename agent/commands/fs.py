@@ -23,9 +23,7 @@ class FsCommands:
         p = Path(raw).resolve()
         root = self._data_root
         if p != root and not str(p).startswith(str(root) + "/"):
-            raise ValueError(
-                f"Path {raw!r} is outside DATA_ROOT_PATH {root!r}"
-            )
+            raise ValueError(f"Path {raw!r} is outside DATA_ROOT_PATH {root!r}")
         return p
 
     def write_text(self, params: dict) -> dict:
@@ -54,7 +52,9 @@ class FsCommands:
             f.write(data)
         logger.info(
             "fs.write_bytes: %d bytes → %s (append=%s)",
-            len(data), path, append,
+            len(data),
+            path,
+            append,
         )
         return {}
 
