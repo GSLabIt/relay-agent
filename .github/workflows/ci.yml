@@ -47,4 +47,4 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Check imports
-        run: python -c "from agent.executor import Executor; from agent.gateway import run; from agent.config import AgentConfig"
+        run: python -c "from agent.executor import Executor; from agent.gateway import run; from agent.config import Config"
