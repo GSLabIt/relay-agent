@@ -40,7 +40,8 @@ jobs:
             echo "bumped=true" >> $GITHUB_OUTPUT
           else
             code=$?
-            if [ $code -eq 21 ]; then
+            # 21 = NoneIncrementExit (old cz), 3 = NoCommitsFoundError (new cz)
+            if [ $code -eq 21 ] || [ $code -eq 3 ]; then
               echo "No bump needed (no eligible commits since last tag)"
               echo "bumped=false" >> $GITHUB_OUTPUT
             else
