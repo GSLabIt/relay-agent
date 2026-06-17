@@ -1,0 +1,53 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install commitizen
+        run: pip install commitizen
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version
+        id: bump
+        run: |
+          if cz bump --yes; then
+            echo "bumped=true" >> $GITHUB_OUTPUT
+          else
+            code=$?
+            if [ $code -eq 21 ]; then
+              echo "No bump needed (no eligible commits since last tag)"
+              echo "bumped=false" >> $GITHUB_OUTPUT
+            else
+              exit $code
+            fi
+          fi
+
+      - name: Push version bump and tag
+        if: steps.bump.outputs.bumped == 'true'
+        run: git push && git push --tags

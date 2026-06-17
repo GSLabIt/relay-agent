@@ -1,3 +1,20 @@
+[project]
+name = "saas-platform-agent"
+version = "0.2.0"
+description = "Open-source agent for Ooops404 SaaS Platform (BYOI mode)"
+requires-python = ">=3.12"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.2.0"
+tag_format = "v$version"
+version_scheme = "semver"
+update_changelog_on_bump = false
+pre_bump_hooks = ["scripts/finalize-changelog.sh"]
+version_files = [
+    "pyproject.toml:version",
+]
+
 [tool.ruff]
 line-length = 80
 target-version = "py312"

@@ -1,6 +1,10 @@
 <!-- markdownlint-disable MD024 MD041 -->
 ## Unreleased
 
+---
+
+## v0.2.0 (2026-06-17)
+
 ### Features
 
 - **`docker.container.exec_pty`**: interactive PTY session inside a running
