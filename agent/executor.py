@@ -46,6 +46,18 @@ class Executor:
             return {}
 
         parts = method.split(".")
+
+        # fs.* uses a two-segment convention (ns.action), unlike docker.* and
+        # saas.instance.* which are three-segment (ns.resource.action).
+        if parts[0] == "fs":
+            if len(parts) != 2:
+                raise ValueError(f"Unknown method: {method!r}")
+            action = parts[1]
+            handler = getattr(self._fs, action, None)
+            if handler is None:
+                raise ValueError(f"Unknown fs command: {action!r}")
+            return handler(params)
+
         if len(parts) < 3:
             raise ValueError(f"Unknown method: {method!r}")
 
@@ -74,12 +86,6 @@ class Executor:
             handler = getattr(self._instance, action, None)
             if handler is None:
                 raise ValueError(f"Unknown instance command: {action!r}")
-            return handler(params)
-
-        if ns == "fs":
-            handler = getattr(self._fs, action, None)
-            if handler is None:
-                raise ValueError(f"Unknown fs command: {action!r}")
             return handler(params)
 
         raise ValueError(f"Unknown method: {method!r}")

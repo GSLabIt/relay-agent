@@ -1,6 +1,27 @@
 <!-- markdownlint-disable MD024 MD041 -->
 ## Unreleased
 
+### Features
+
+- **`fs.list_dir` / `fs.read_bytes`**: read-direction counterpart to the
+  existing `fs.write_bytes`/`upload_dir_to_agent` — the control plane can now
+  download a tenant directory (filestore, addons) from the agent host in
+  chunks, keyed by relative path and read offset. Needed for backups of
+  agent-connected (BYOI) instances, which previously only backed up the
+  database (no filesystem download path existed at all).
+
+### Fixes
+
+- **`Executor.dispatch` never routed the `fs.*` namespace**: method-name
+  parsing required 3 dot-separated segments (`ns.resource.action`, the
+  `docker.*`/`saas.instance.*` convention), but `fs.*` methods only have 2
+  (`fs.action`) — every call (`fs.write_text`, `fs.write_bytes`, `fs.mkdir`,
+  and the two new commands above) raised `ValueError: Unknown method` before
+  ever reaching `FsCommands`. `fs` is now dispatched as its own two-segment
+  case ahead of the 3-segment check. Reproduced and verified fixed with an
+  isolated `Executor.dispatch()` call (mocked `docker` module, no daemon
+  required) — confirmed both the failure and the fix.
+
 ---
 
 ## v0.2.0 (2026-06-17)

@@ -64,3 +64,45 @@ class FsCommands:
         mode = params.get("mode", 0o755)
         os.makedirs(path, mode=mode, exist_ok=True)
         return {}
+
+    def list_dir(self, params: dict) -> dict:
+        """Recursively list files under *path* (relative posix paths + sizes).
+
+        Returns an empty list (not an error) when *path* does not exist —
+        callers use this to back up tenant directories that may legitimately
+        be empty or not yet created (e.g. an instance with no addons repos).
+        """
+        path = self._safe_path(params["path"])
+        if not path.exists():
+            return {"files": []}
+        files = [
+            {
+                "path": entry.relative_to(path).as_posix(),
+                "size": entry.stat().st_size,
+            }
+            for entry in path.rglob("*")
+            if entry.is_file()
+        ]
+        return {"files": files}
+
+    def read_bytes(self, params: dict) -> dict:
+        """Read a chunk of a file as base64, for chunked download.
+
+        params:
+          path   — absolute path on the agent host
+          offset — byte offset to start reading from (default 0)
+          length — max bytes to read (default 4 MiB)
+
+        Returns data_b64 plus eof=True once the read reaches end-of-file, so
+        the caller (AgentHttpProxy.download_file_from_agent) knows when to
+        stop without a separate stat() round-trip.
+        """
+        path = self._safe_path(params["path"])
+        offset: int = params.get("offset", 0)
+        length: int = params.get("length", 4 * 1024 * 1024)
+        with open(path, "rb") as f:
+            f.seek(offset)
+            chunk = f.read(length)
+        size = path.stat().st_size
+        eof = (offset + len(chunk)) >= size
+        return {"data_b64": base64.b64encode(chunk).decode(), "eof": eof}
