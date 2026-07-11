@@ -124,6 +124,8 @@ The agent speaks a simple JSON protocol over WebSocket:
 | `fs.write_text` | Write a UTF-8 text file at a path inside DATA_ROOT_PATH |
 | `fs.write_bytes` | Write/append binary data (base64-encoded) — use for chunked uploads |
 | `fs.mkdir` | Create a directory inside DATA_ROOT_PATH |
+| `fs.list_dir` | Recursively list files (relative path + size) under a directory inside DATA_ROOT_PATH |
+| `fs.read_bytes` | Read a chunk of a file as base64 (`offset`/`length`, returns `eof`) — use for chunked downloads |
 | `saas.instance.provision` | High-level: create dirs + write config + pull image + spawn container |
 | `saas.instance.deprovision` | Stop and remove instance container + cloudflared sidecar |
 
