@@ -12,6 +12,7 @@ from agent.commands.container import ContainerCommands
 from agent.commands.fs import FsCommands
 from agent.commands.image import ImageCommands
 from agent.commands.instance import InstanceCommands
+from agent.commands.postgres import PostgresCommands
 from agent.commands.system import SystemCommands
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class Executor:
         self._docker = docker.from_env()
         self._container = ContainerCommands(self._docker, data_root_path)
         self._instance = InstanceCommands(self._docker, data_root_path)
+        self._postgres = PostgresCommands(self._docker, data_root_path)
         self._system = SystemCommands(self._docker)
         self._fs = FsCommands(data_root_path)
         self._image = ImageCommands(self._docker)
@@ -86,6 +88,12 @@ class Executor:
             handler = getattr(self._instance, action, None)
             if handler is None:
                 raise ValueError(f"Unknown instance command: {action!r}")
+            return handler(params)
+
+        if ns == "saas" and resource == "postgres":
+            handler = getattr(self._postgres, action, None)
+            if handler is None:
+                raise ValueError(f"Unknown postgres command: {action!r}")
             return handler(params)
 
         raise ValueError(f"Unknown method: {method!r}")

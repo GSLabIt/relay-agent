@@ -1,7 +1,7 @@
 [project]
 name = "saas-platform-agent"
 version = "0.3.0"
-description = "Open-source agent for Ooops404 SaaS Platform (BYOI mode)"
+description = "Open-source agent for GSLabIt SaaS Platform (BYOI mode)"
 requires-python = ">=3.12"
 
 [tool.commitizen]

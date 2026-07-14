@@ -128,6 +128,8 @@ The agent speaks a simple JSON protocol over WebSocket:
 | `fs.read_bytes` | Read a chunk of a file as base64 (`offset`/`length`, returns `eof`) — use for chunked downloads |
 | `saas.instance.provision` | High-level: create dirs + write config + pull image + spawn container |
 | `saas.instance.deprovision` | Stop and remove instance container + cloudflared sidecar |
+| `saas.postgres.bootstrap` | Idempotently create/restart the per-server `saas_postgres` container (BYOI servers with no SSH access) |
+| `saas.postgres.enable_pitr` | Recreate `saas_postgres` with WAL archiving enabled, for point-in-time recovery |
 
 ## Development
 
