@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD024 MD041 -->
-## Unreleased
+## v0.4.0 (2026-07-14)
 
 ### Features
 
