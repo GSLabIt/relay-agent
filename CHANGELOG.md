@@ -1,4 +1,28 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Features
+
+- **`saas.postgres.bootstrap` / `saas.postgres.enable_pitr`**: new
+  `PostgresCommands` namespace, wired into `Executor.dispatch` alongside
+  `docker.*`/`fs.*`/`saas.instance.*`. `bootstrap` idempotently creates (or
+  restarts, if stopped) the per-server `saas_postgres` container from the
+  agent side — the only channel a pure BYOI server (no SSH access by
+  definition) has ever had to get its own dedicated Postgres running,
+  needed before this the control plane's dedicated-Postgres path only
+  worked for servers bootstrapped via SSH (Hetzner/DigitalOcean/Scaleway
+  self-service provisioning). `enable_pitr` recreates the same container
+  with WAL archiving turned on (`archive_mode=on`, a `/wal_archive` mount,
+  `archive_timeout=300`) for the control plane's point-in-time recovery
+  feature — Docker requires stop+remove+recreate to add a mount to an
+  existing container, so both commands share the same
+  create/already-running/restart-if-stopped logic.
+
+### Fixes
+
+- **`pyproject.toml` description**: referenced the old "Ooops404" org name
+  instead of "GSLabIt" — leftover from before the repo moved orgs.
+
 ## v0.3.0 (2026-07-11)
 
 ### Features
