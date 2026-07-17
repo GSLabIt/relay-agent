@@ -115,7 +115,7 @@ The agent speaks a simple JSON protocol over WebSocket:
 | `docker.container.stop` | Stop a container |
 | `docker.container.start` | Start a stopped container |
 | `docker.container.remove` | Remove a container |
-| `docker.container.inspect` | Container details |
+| `docker.container.inspect` | Container details (id/name/status/image/created + `host_config.nano_cpus`/`memory`, used by the control plane's configuration drift detection) |
 | `docker.container.logs` | Container log lines |
 | `docker.container.stats` | CPU/RAM/network/disk metrics |
 | `docker.container.list` | List containers |
