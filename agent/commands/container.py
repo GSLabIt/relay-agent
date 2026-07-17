@@ -96,12 +96,21 @@ class ContainerCommands:
     def inspect(self, params: dict) -> dict:
         c = self._get(params["name_or_id"])
         attrs = c.attrs
+        host_config = attrs.get("HostConfig") or {}
         return {
             "id": attrs["Id"],
             "name": attrs["Name"].lstrip("/"),
             "status": attrs["State"]["Status"],
             "image": attrs["Config"]["Image"],
             "created": attrs["Created"],
+            # Added for configuration drift detection (control-plane
+            # OdooDriver.drift_checks) — only the two fields it needs, not
+            # the full HostConfig (which can carry unrelated internal
+            # detail we don't want to widen the wire format with).
+            "host_config": {
+                "nano_cpus": host_config.get("NanoCpus"),
+                "memory": host_config.get("Memory"),
+            },
         }
 
     def logs(self, params: dict) -> dict:

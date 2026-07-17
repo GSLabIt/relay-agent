@@ -1,4 +1,17 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Features
+
+- **`docker.container.inspect`**: response now includes `host_config`
+  (`nano_cpus`/`memory`), alongside the existing id/name/status/image/
+  created fields. Needed by the control plane's configuration drift
+  detection (Phase 9.6) to compare an instance's declared CPU/RAM
+  allocation against what's actually running, for instances on
+  agent-connected (BYOI) servers — only `nano_cpus`/`memory` are
+  forwarded, not the full `HostConfig`/`Env`, so no unrelated container
+  detail (env vars, mounts) is newly exposed on the wire.
+
 ## v0.4.0 (2026-07-14)
 
 ### Features
