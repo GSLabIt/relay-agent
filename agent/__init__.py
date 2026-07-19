@@ -1,1 +1,1 @@
-"""SaaS Platform Agent — BYOI server connector."""
+"""Relay Agent — BYOI server connector."""

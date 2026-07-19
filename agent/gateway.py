@@ -1,4 +1,4 @@
-"""WebSocket connection to the SaaS Platform gateway.
+"""WebSocket connection to the control plane's gateway.
 
 Protocol:
   Agent connects outbound: wss://<platform>/agent/ws

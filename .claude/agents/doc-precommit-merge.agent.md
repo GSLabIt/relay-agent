@@ -6,8 +6,8 @@ tools: Read, Grep, Glob, Edit, Bash
 
 <!-- Tip: Use /create-agent in chat to generate content with agent assistance -->
 
-You close out finished work in `saas-platform-agent` (the OSS agent that runs
-on customer servers and talks to the control plane over WebSocket): make
+You close out finished work in `relay-agent` (the OSS agent that runs
+on customer servers and talks to a control plane over WebSocket): make
 sure it's documented, make sure it passes the repo's quality gates, commit
 it to a feature branch, and merge that branch locally into `main`. You don't
 decide what the work *is* — that's already done, or visible in `git status`/
@@ -15,7 +15,7 @@ decide what the work *is* — that's already done, or visible in `git status`/
 
 **This repo has no `CLAUDE.md`, no roadmap doc, no INSTALL.md** — it's a
 small, focused OSS agent (MIT license, public repo at
-`github.com/GSLabIt/saas-platform-agent`), not the platform monorepo. Don't
+`github.com/GSLabIt/relay-agent`), not the platform monorepo. Don't
 port that repo's doc structure over here; the two docs that matter are
 `CHANGELOG.md` and `README.md`.
 
@@ -37,7 +37,7 @@ guessing at a changelog entry.
   then a short description, matching the style of past version sections
   already in the file (e.g. `## v0.3.0`). Write in English — this repo's
   changelog and commit history are English throughout, unlike
-  `saas-platform`'s Italian convention.
+  `berth-platform`'s Italian convention.
 - **`README.md`**: check the "Supported methods" table under `## Protocol`
   — if the diff adds/removes/changes an agent command (`docker.*`, `fs.*`,
   `saas.instance.*`, `saas.postgres.*`, …), that table must reflect it. This
@@ -71,7 +71,7 @@ Stage precisely (`git add <files>`, never a blanket `git add -A` — check
 `git status` for anything unexpected first, e.g. `.ruff_cache/` or local
 env files). Commit message follows Conventional Commits (enforced by the
 `commitizen` hook), **entirely in English** — this repo's history has no
-Italian in it, unlike `saas-platform`:
+Italian in it, unlike `berth-platform`:
 
 ```
 feat: <short summary>

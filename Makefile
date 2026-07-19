@@ -8,7 +8,7 @@ run:
 	GATEWAY_URL=$(GATEWAY_URL) TOKEN=$(TOKEN) DATA_ROOT_PATH=$(DATA_ROOT) python -m agent
 
 build:
-	docker build -t saas-platform-agent:dev .
+	docker build -t relay-agent:dev .
 
 test:
 	python -m pytest tests/ -v
