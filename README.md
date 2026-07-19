@@ -1,17 +1,21 @@
-# SaaS Platform Agent
+# Relay Agent
 
-Lightweight agent that runs on your own server and connects it to the
-[SaaS Platform](https://github.com/gslabit/saas-platform) control plane.
+Lightweight, control-plane-agnostic agent that runs on your own server and
+connects it — over a single outbound connection — to any control plane that
+speaks its JSON-RPC-over-WebSocket protocol. Originally built for
+[Berth](https://github.com/gslabit/berth-platform), a multi-tenant hosting
+control plane, but the protocol has no Berth-specific assumptions baked in.
 
 ## How it works
 
-The agent opens a **single outbound WebSocket connection** to the platform gateway.
-No inbound ports required. No SSH credentials stored on the platform.
+The agent opens a **single outbound WebSocket connection** to the control
+plane's gateway. No inbound ports required. No SSH credentials stored on
+the control plane.
 
 ```
-Your server                     SaaS Platform
+Your server                     Control plane
 ──────────────────               ──────────────────────────
-saas-agent ──── wss:// ────────▶ /agent/ws (gateway)
+relay-agent ─── wss:// ────────▶ /agent/ws (gateway)
                (outbound only)          │
                                         │ JSON-RPC commands
                                         ▼
@@ -48,14 +52,14 @@ then run on your server:
 
 ```bash
 docker run -d \
-  --name saas-agent \
+  --name relay-agent \
   --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /data/tenants:/data/tenants \
   -e GATEWAY_URL=wss://api.your-platform.com/agent/ws \
   -e TOKEN=<your-token> \
   -e DATA_ROOT_PATH=/data/tenants \
-  ghcr.io/gslabit/saas-platform-agent:latest
+  ghcr.io/gslabit/relay-agent:latest
 ```
 
 ### Docker Compose
@@ -134,8 +138,8 @@ The agent speaks a simple JSON protocol over WebSocket:
 ## Development
 
 ```bash
-git clone https://github.com/gslabit/saas-platform-agent
-cd saas-platform-agent
+git clone https://github.com/gslabit/relay-agent
+cd relay-agent
 
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt

@@ -1,7 +1,7 @@
 [project]
-name = "saas-platform-agent"
+name = "relay-agent"
 version = "0.5.0"
-description = "Open-source agent for GSLabIt SaaS Platform (BYOI mode)"
+description = "Open-source outbound-only agent for remote Docker/filesystem/Postgres operations (BYOI mode) — control-plane agnostic"
 requires-python = ">=3.12"
 
 [tool.commitizen]

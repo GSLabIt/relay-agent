@@ -1,4 +1,22 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Fixes
+
+- **Repo renamed `saas-platform-agent` → `relay-agent`**: the agent is
+  control-plane-agnostic by design (no assumptions baked into the protocol
+  beyond `docker.*`/`fs.*`/`saas.*` JSON-RPC methods), so the old name tying
+  it to one specific control plane was misleading. Package name
+  (`pyproject.toml`), Docker image (`ghcr.io/gslabit/relay-agent`), example
+  compose service/container name, README, and internal doc comments updated
+  to match. The sibling control-plane repo was renamed
+  `saas-platform` → `berth-platform` in the same pass — comments referencing
+  it updated accordingly. Not touched: the `saas_platform_proxy` Docker
+  network name default in `commands/instance.py`/`commands/postgres.py` —
+  that's a real, load-bearing network name on already-provisioned
+  infrastructure, not a cosmetic label, and renaming it is a separate,
+  riskier migration outside the scope of this rename.
+
 ## v0.5.0 (2026-07-17)
 
 ### Features

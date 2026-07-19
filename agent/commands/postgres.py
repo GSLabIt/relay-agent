@@ -1,6 +1,6 @@
 """Dedicated Postgres bootstrap for the agent's own server.
 
-Mirrors saas_platform/backend/app/services/server_bootstrap.py's SSH-based
+Mirrors berth_platform/backend/app/services/server_bootstrap.py's SSH-based
 _POSTGRES_BOOTSTRAP_SCRIPT_TEMPLATE (Docker run + bind mounts), but executed
 locally by the agent instead of over an SSH connection — needed for BYOI
 servers that never had SSH access to begin with (agent is the only channel).

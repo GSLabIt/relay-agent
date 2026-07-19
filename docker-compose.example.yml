@@ -1,7 +1,7 @@
 services:
-  saas-agent:
-    image: ghcr.io/gslabit/saas-platform-agent:latest
-    container_name: saas_agent
+  relay-agent:
+    image: ghcr.io/gslabit/relay-agent:latest
+    container_name: relay_agent
     restart: unless-stopped
     environment:
       GATEWAY_URL: wss://api.your-platform.com/agent/ws

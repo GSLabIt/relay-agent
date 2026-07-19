@@ -21,7 +21,7 @@ def main() -> None:
     )
 
     logger = logging.getLogger(__name__)
-    logger.info("SaaS Platform Agent starting")
+    logger.info("Relay Agent starting")
     logger.info("Gateway: %s", cfg.gateway_url)
     logger.info("Data root: %s", cfg.data_root_path)
 
