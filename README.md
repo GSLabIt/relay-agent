@@ -134,6 +134,7 @@ The agent speaks a simple JSON protocol over WebSocket:
 | `saas.instance.deprovision` | Stop and remove instance container + cloudflared sidecar |
 | `saas.postgres.bootstrap` | Idempotently create/restart the per-server `saas_postgres` container (BYOI servers with no SSH access) |
 | `saas.postgres.enable_pitr` | Recreate `saas_postgres` with WAL archiving enabled, for point-in-time recovery |
+| `tcp.tunnel.open` | Open a raw TCP connection to a target reachable from the agent's Docker host and relay it over the gateway WS (stream_id-keyed, same machinery as PTY streaming plus `stream_pause`/`stream_resume` for flow control) — used by the DB tunnel feature |
 
 ## Development
 

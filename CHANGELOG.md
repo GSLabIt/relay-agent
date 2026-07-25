@@ -1,4 +1,52 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Feat
+
+- **DB tunnel — TCP relay counterpart**: new `tcp.tunnel.open` JSON-RPC
+  method + `agent/commands/tcp_tunnel.py` (`asyncio.open_connection`
+  wrapper) let the control plane relay a raw TCP connection through the
+  agent to a target reachable from the agent's own Docker host (today
+  always the local `saas_postgres` container — see berth-platform's
+  `services/db_tunnel_manager.py`). Reuses the PTY streaming machinery in
+  `gateway.py` verbatim (`stream_stdin`/`stream_close`/`stream_data`/
+  `stream_closed`, same stream_id-keyed queue dispatch) plus two new
+  control messages, `stream_pause`/`stream_resume`, for flow control on
+  the target->WS direction — a dropped chunk desyncs a stateful wire
+  protocol permanently, unlike PTY output where a drop is only a cosmetic
+  glitch, so this direction cannot use PTY's silent-drop-on-full queue
+  semantics.
+  Found and fixed during review, before this was wired up to any real
+  control plane: the WS->target (client write) direction had no such
+  backpressure at all — its queue was bounded (`maxsize=256`, inherited
+  unchanged from the PTY code it was adapted from) with silent
+  drop-on-full, so a sustained write burst outrunning the target's drain
+  rate (e.g. a large `\copy` through the tunnel) could silently desync the
+  wire protocol, the exact failure mode the read-direction flow control
+  was built to avoid — just in the direction it didn't cover. Fixed by
+  making that queue unbounded for TCP tunnel sessions specifically (PTY
+  keeps its bounded queue — an occasional dropped keystroke on a stalled
+  terminal is an already-accepted, unrelated tradeoff): growth is bounded
+  in practice by ordinary WS/TCP backpressure between the control plane
+  and this agent, and unlike a silent drop, unbounded growth can never
+  corrupt the protocol. Also hardened `target_port` parsing (a malformed
+  value previously raised uncaught inside a fire-and-forget task — no
+  reply sent, the caller only recovered via its own 10s timeout) to
+  always send a proper JSON-RPC error response instead.
+  Verified live against the real code path (fake WebSocket + real local
+  TCP server, no mocks of the logic under test): bidirectional relay and
+  clean close; pause/resume actually gates delivery (zero `stream_data`
+  messages while paused, exactly the buffered chunk once resumed);
+  1000×50-byte-chunk burst against a deliberately slow target — confirmed
+  this reproduces `asyncio.QueueFull` against the old `maxsize=256` queue
+  and delivers all 50000 bytes with zero drops against the fix;
+  malformed `target_port` and connection-refused both produce a clean
+  error response with no leaked entry in `active_streams`. Not tested:
+  a real WebSocket transport end-to-end (only the internal handler logic,
+  which is what changed) and the actual `saas_postgres` target (no berth
+  server available in this environment) — both already exercised
+  indirectly via the reused PTY code path in production.
+
 ## v0.5.1 (2026-07-19)
 
 ### Fixes

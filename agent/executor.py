@@ -14,6 +14,7 @@ from agent.commands.image import ImageCommands
 from agent.commands.instance import InstanceCommands
 from agent.commands.postgres import PostgresCommands
 from agent.commands.system import SystemCommands
+from agent.commands.tcp_tunnel import TcpTunnelCommands
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class Executor:
         self._system = SystemCommands(self._docker)
         self._fs = FsCommands(data_root_path)
         self._image = ImageCommands(self._docker)
+        self._tcp_tunnel = TcpTunnelCommands()
 
     def docker_version(self) -> str:
         try:
@@ -111,3 +113,10 @@ class Executor:
         return self._container.run_pty_blocking(
             name_or_id, cols, rows, stdin_q, loop, data_cb
         )
+
+    async def open_tcp_tunnel_connection(
+        self, target_host: str, target_port: int
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """Open a raw TCP connection to target_host:target_port, reachable
+        from this agent's own Docker host. Delegates to TcpTunnelCommands."""
+        return await self._tcp_tunnel.open_connection(target_host, target_port)

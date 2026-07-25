@@ -29,6 +29,19 @@ Protocol:
       {"type": "response", "id": "uuid", "result": {"ok": true}}  ← ack
       {"type": "stream_data",   "stream_id": "...", "data": "<base64>"}
       {"type": "stream_closed", "stream_id": "...", "exit_code": N}
+
+  TCP tunnel extension (DB tunnel — berth-platform's db_tunnel_manager.py):
+    same stream_id-keyed queue/dispatch machinery as PTY above, reusing
+    stream_stdin/stream_close/stream_data/stream_closed verbatim — no PTY
+    semantics (no resize), plus two new control messages for flow control
+    (a dropped chunk desyncs a wire protocol permanently, unlike PTY output
+    where it's just a cosmetic glitch — see agent_registry.py's
+    _STREAM_HIGH_WATERMARK on the control-plane side for why):
+    Gateway → Agent:
+      {"type": "request", ..., "method": "tcp.tunnel.open",
+       "params": {"target_host": "...", "target_port": N, "stream_id": "..."}}
+      {"type": "stream_pause",  "stream_id": "..."}  ← stop reading target_host
+      {"type": "stream_resume", "stream_id": "..."}  ← resume reading
 """
 
 from __future__ import annotations
@@ -128,8 +141,10 @@ async def _handle_session(
     command_timeout: float,
 ) -> None:
     """Handle a single connected session until the WebSocket closes."""
-    # stream_id → asyncio.Queue for PTY control messages (stdin/resize/close)
-    active_ptys: dict[str, asyncio.Queue] = {}
+    # stream_id → asyncio.Queue for stream control messages (stdin/resize/
+    # pause/resume/close) — shared by PTY sessions and TCP tunnel sessions,
+    # the queue itself is payload-agnostic (see gateway.py module docstring).
+    active_streams: dict[str, asyncio.Queue] = {}
 
     async for raw in ws:
         try:
@@ -159,19 +174,19 @@ async def _handle_session(
 
         elif msg_type == "stream_stdin":
             stream_id = message.get("stream_id", "")
-            pty_q = active_ptys.get(stream_id)
-            if pty_q:
+            stream_q = active_streams.get(stream_id)
+            if stream_q:
                 with suppress(asyncio.QueueFull):
-                    pty_q.put_nowait(
+                    stream_q.put_nowait(
                         ("data", base64.b64decode(message.get("data", "")))
                     )
 
         elif msg_type == "stream_resize":
             stream_id = message.get("stream_id", "")
-            pty_q = active_ptys.get(stream_id)
-            if pty_q:
+            stream_q = active_streams.get(stream_id)
+            if stream_q:
                 with suppress(asyncio.QueueFull):
-                    pty_q.put_nowait(
+                    stream_q.put_nowait(
                         (
                             "resize",
                             message.get("cols", 80),
@@ -179,12 +194,26 @@ async def _handle_session(
                         )
                     )
 
+        elif msg_type == "stream_pause":
+            stream_id = message.get("stream_id", "")
+            stream_q = active_streams.get(stream_id)
+            if stream_q:
+                with suppress(asyncio.QueueFull):
+                    stream_q.put_nowait(("pause",))
+
+        elif msg_type == "stream_resume":
+            stream_id = message.get("stream_id", "")
+            stream_q = active_streams.get(stream_id)
+            if stream_q:
+                with suppress(asyncio.QueueFull):
+                    stream_q.put_nowait(("resume",))
+
         elif msg_type == "stream_close":
             stream_id = message.get("stream_id", "")
-            pty_q = active_ptys.get(stream_id)
-            if pty_q:
+            stream_q = active_streams.get(stream_id)
+            if stream_q:
                 with suppress(asyncio.QueueFull):
-                    pty_q.put_nowait(("close",))
+                    stream_q.put_nowait(("close",))
 
         elif msg_type == "request":
             request_id = message.get("id", "")
@@ -194,7 +223,13 @@ async def _handle_session(
             if method == "docker.container.exec_pty":
                 asyncio.create_task(
                     _handle_pty_session(
-                        ws, executor, request_id, params, active_ptys
+                        ws, executor, request_id, params, active_streams
+                    )
+                )
+            elif method == "tcp.tunnel.open":
+                asyncio.create_task(
+                    _handle_tcp_tunnel_session(
+                        ws, executor, request_id, params, active_streams
                     )
                 )
             else:
@@ -218,7 +253,7 @@ async def _handle_pty_session(
     executor: Executor,
     request_id: str,
     params: dict,
-    active_ptys: dict[str, asyncio.Queue],
+    active_streams: dict[str, asyncio.Queue],
 ) -> None:
     """Start an interactive PTY session and stream I/O over the gateway WS."""
     stream_id: str = params.get("stream_id", "")
@@ -228,7 +263,7 @@ async def _handle_pty_session(
 
     # asyncio queue: ("data", bytes) | ("resize", cols, rows) | ("close",)
     ctrl_q: asyncio.Queue = asyncio.Queue(maxsize=256)
-    active_ptys[stream_id] = ctrl_q
+    active_streams[stream_id] = ctrl_q
 
     # threading queue bridged from ctrl_q for use in the blocking PTY thread
     thread_q: queue.Queue = queue.Queue(maxsize=256)
@@ -281,7 +316,7 @@ async def _handle_pty_session(
         logger.exception("PTY session error for container %s", name_or_id)
     finally:
         bridge_task.cancel()
-        active_ptys.pop(stream_id, None)
+        active_streams.pop(stream_id, None)
         with suppress(Exception):
             await ws.send(
                 _json(
@@ -289,6 +324,160 @@ async def _handle_pty_session(
                         "type": "stream_closed",
                         "stream_id": stream_id,
                         "exit_code": exit_code,
+                    }
+                )
+            )
+
+
+async def _handle_tcp_tunnel_session(
+    ws: websockets.WebSocketClientProtocol,
+    executor: Executor,
+    request_id: str,
+    params: dict,
+    active_streams: dict[str, asyncio.Queue],
+) -> None:
+    """Open a raw TCP connection to target_host:target_port (reachable from
+    this agent's own Docker host — for the DB tunnel feature this is always
+    the local saas_postgres container) and relay bytes over the gateway WS.
+
+    Unlike _handle_pty_session, this runs entirely on the event loop — no
+    thread pool, no threading.Queue bridge — since asyncio.open_connection
+    is natively async. Honors stream_pause/stream_resume (queued as
+    ("pause",) / ("resume",) tuples, same ctrl_q as PTY's stdin/close) by
+    gating the target->WS read loop on an asyncio.Event, so a slow WS
+    consumer can throttle how fast we drain the target socket instead of
+    us buffering unboundedly or silently dropping chunks.
+
+    ctrl_q itself (the WS->target direction: client writes/COPY data) is
+    deliberately unbounded, unlike PTY's maxsize=256 stdin queue — PTY input
+    is keystrokes, where an occasional drop under a stalled terminal is a
+    known-acceptable cosmetic tradeoff, but there is no pause/resume signal
+    in this direction (only target->WS has one, see above), so a bounded
+    queue would silently drop chunks of a stateful wire protocol under a
+    large write burst (e.g. \\copy of a big file) outrunning the target's
+    drain rate — exactly the desync risk this module's docstring warns
+    about, just in the direction it doesn't cover. Unbounded trades that for
+    a memory-growth risk that in practice stays small: growth is capped by
+    how fast the control-plane can push stream_stdin frames, which is itself
+    bounded by ordinary WS/TCP backpressure between the control plane and
+    this agent.
+    """
+    stream_id: str = params.get("stream_id", "")
+    target_host: str = params.get("target_host", "")
+
+    try:
+        target_port = int(params.get("target_port", 0))
+    except (TypeError, ValueError) as exc:
+        await ws.send(
+            _json(
+                {
+                    "type": "response",
+                    "id": request_id,
+                    "error": {
+                        "code": -32602,
+                        "message": f"Invalid target_port: {exc}",
+                    },
+                }
+            )
+        )
+        return
+
+    ctrl_q: asyncio.Queue = asyncio.Queue()
+    active_streams[stream_id] = ctrl_q
+
+    try:
+        reader, writer = await executor.open_tcp_tunnel_connection(
+            target_host, target_port
+        )
+    except Exception as exc:
+        active_streams.pop(stream_id, None)
+        await ws.send(
+            _json(
+                {
+                    "type": "response",
+                    "id": request_id,
+                    "error": {"code": -32002, "message": str(exc)},
+                }
+            )
+        )
+        return
+
+    await ws.send(
+        _json({"type": "response", "id": request_id, "result": {"ok": True}})
+    )
+
+    not_paused = asyncio.Event()
+    not_paused.set()
+
+    async def _read_target_to_ws() -> None:
+        try:
+            while True:
+                await not_paused.wait()
+                chunk = await reader.read(65536)
+                if not chunk:
+                    return
+                # Gate again right before sending, not just before starting
+                # the read: reader.read() can't be interrupted mid-flight,
+                # so a read already in progress when "pause" arrives still
+                # completes — without this second check that chunk would
+                # ship anyway, defeating the pause. This bounds the worst
+                # case to "one chunk (<=64KB) held in our own memory while
+                # paused, never transmitted until resumed" instead of an
+                # unbounded number of chunks leaking through.
+                await not_paused.wait()
+                await ws.send(
+                    _json(
+                        {
+                            "type": "stream_data",
+                            "stream_id": stream_id,
+                            "data": base64.b64encode(chunk).decode(),
+                        }
+                    )
+                )
+        except Exception:
+            return
+
+    async def _consume_ctrl() -> None:
+        while True:
+            item = await ctrl_q.get()
+            tag = item[0]
+            if tag == "data":
+                try:
+                    writer.write(item[1])
+                    await writer.drain()
+                except Exception:
+                    return
+            elif tag == "pause":
+                not_paused.clear()
+            elif tag == "resume":
+                not_paused.set()
+            elif tag == "close":
+                return
+
+    read_task = asyncio.create_task(_read_target_to_ws())
+    ctrl_task = asyncio.create_task(_consume_ctrl())
+    try:
+        await asyncio.wait(
+            {read_task, ctrl_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+    finally:
+        read_task.cancel()
+        ctrl_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await read_task
+        with suppress(asyncio.CancelledError):
+            await ctrl_task
+        with suppress(Exception):
+            writer.close()
+            await writer.wait_closed()
+        active_streams.pop(stream_id, None)
+        with suppress(Exception):
+            await ws.send(
+                _json(
+                    {
+                        "type": "stream_closed",
+                        "stream_id": stream_id,
+                        "exit_code": 0,
                     }
                 )
             )
