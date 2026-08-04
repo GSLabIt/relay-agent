@@ -1,4 +1,77 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Feat
+
+- **Postgres dynamic tuning support**: `docker.system.info` now surfaces
+  `mem_total_bytes`/`ncpu` (already on every `docker.info()` response, just
+  never forwarded before) and `docker.container.inspect` now surfaces `cmd`
+  (the container's full command line) — both consumed by the control
+  plane's `services/postgres_tuning.py` to size and display Postgres GUC
+  flags for this server's dedicated `saas_postgres`, sized from resources
+  the agent itself observes rather than a static guess. New
+  `saas.postgres.retune` recreates `saas_postgres` with a control-plane-
+  supplied, already-computed set of `-c key=value` tuning flags — the agent
+  doesn't validate or interpret the values, it only executes the recreate
+  (same "backend computes, agent stays dumb" split as `bootstrap`/
+  `enable_pitr`), and detects + preserves WAL archiving from the existing
+  container's `Config.Cmd` if PITR was already enabled, so tuning and PITR
+  can be applied independently without one clobbering the other.
+- **Server-level host terminal**: new `saas.host.exec_pty` JSON-RPC method,
+  backed by `agent/commands/host_shell.py`, opens a real interactive shell
+  PTY on the machine the agent itself runs on (`pty.openpty()` plus
+  `subprocess.Popen`, no Docker API involved) — the agent-connection
+  counterpart of the SSH `invoke_shell` path already used for ssh-connected
+  servers (berth-platform `routers/terminal.py::server_terminal`). Distinct
+  from the existing `docker.container.exec_pty` (which execs into a named
+  container): this isn't scoped to any container. Reuses the PTY streaming
+  machinery in `gateway.py` verbatim (`stream_stdin`/`stream_resize`/
+  `stream_close`/`stream_data`/`stream_closed`, same stream_id-keyed queue
+  dispatch) — only the start method and the absence of `name_or_id` differ.
+  Not a new trust boundary: the agent channel already lets the control
+  plane run arbitrary commands as this same process's user via
+  `docker.container.run` (e.g. a privileged container with `/` bind-mounted,
+  then exec in) — this only offers a more direct path to a capability
+  that's already reachable.
+  Found and fixed during review, before this was wired up to any control
+  plane: the shell was spawned with `env=dict(os.environ)`, which would
+  have handed the agent's own long-lived `TOKEN` (the credential
+  authenticating this agent's `/agent/ws` connection, injected via
+  `docker run -e TOKEN=...`) straight to anyone opening this new terminal.
+  Unlike the container-scoped terminal (`docker exec` uses the *container's*
+  configured env, never the agent process's own), a host shell has no such
+  separation for free. Fixed with an explicit allowlist (`PATH`/`HOME`/
+  `USER`/`LOGNAME`/`LANG`/`LC_ALL`/`TZ`/`SHELL`) instead of a denylist — an
+  allowlist also survives a future secret being added to the agent's own
+  env without anyone remembering to add it to a denylist here. Also fixed:
+  a malformed terminal resize raises `struct.error` (`struct.pack('HHHH',
+  ...)` on an out-of-range value), which isn't an `OSError` subclass and so
+  wasn't caught by the original `suppress(OSError)` around `_set_winsize` —
+  widened to `suppress(OSError, struct.error)`.
+  Verified live against the real code path, no mocks of the logic under
+  test: spawned a real PTY session end-to-end and dumped `env | sort` from
+  inside it — confirmed no `TOKEN`/`GATEWAY_URL`/`DATA_ROOT_PATH` present;
+  an out-of-range resize (cols/rows of 100000, beyond the unsigned-short
+  limit `struct.pack`'s format expects) no longer kills the session —
+  command execution kept working immediately after; a backgrounded child
+  process (`sleep 300 &`) was confirmed reaped via the process-group
+  SIGHUP sent on session close, no orphaned process left behind;
+  `saas.host.exec_pty` confirmed routed
+  through `_handle_host_pty_session` end-to-end via the real
+  `_handle_session` dispatcher (ack → `stream_data` → `stream_closed`), not
+  falling through to the generic `Executor.dispatch` path. `postgres.retune`
+  verified against a mocked Docker client for all three cases: no prior WAL
+  archiving (extra args applied as-is), WAL archiving already on (preserved
+  and merged with the new tuning args, not overwritten), and no existing
+  container at all (handled gracefully, `wal_archiving: false`).
+  `docker.container.inspect`'s new `cmd` field confirmed to never surface
+  `Config.Env` (a separate field, e.g. `POSTGRES_PASSWORD`, deliberately
+  never included). Both CI checks (`ruff check`/`ruff format --check`, the
+  import-check importing `Executor`/`gateway.run`/`Config`) pass locally.
+  Not tested: a real WebSocket transport end-to-end (only the internal
+  handler logic changed) and a real control-plane-driven session against a
+  genuinely remote server (no berth server available in this environment).
+
 ## v0.6.0 (2026-07-25)
 
 ### Feat

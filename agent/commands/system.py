@@ -19,6 +19,13 @@ class SystemCommands:
             "images": info.get("Images", 0),
             "os": info.get("OperatingSystem", "unknown"),
             "architecture": info.get("Architecture", "unknown"),
+            # Host RAM/CPU as Docker itself sees them — used by the
+            # control-plane to size Postgres tuning flags for this
+            # server's dedicated saas_postgres (berth-platform
+            # services/postgres_tuning.py). Already available on every
+            # docker.info() response, just never surfaced before.
+            "mem_total_bytes": info.get("MemTotal", 0),
+            "ncpu": info.get("NCPU", 0),
         }
 
     def ping(self, params: dict) -> dict:

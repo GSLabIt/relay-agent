@@ -113,13 +113,13 @@ The agent speaks a simple JSON protocol over WebSocket:
 | Method | Description |
 |---|---|
 | `ping` | Liveness check |
-| `docker.system.info` | Docker daemon info |
+| `docker.system.info` | Docker daemon info, plus `mem_total_bytes`/`ncpu` (used by the control plane to size Postgres tuning flags for this server's dedicated `saas_postgres`) |
 | `docker.system.ping` | Docker daemon ping |
 | `docker.container.run` | Start a new container |
 | `docker.container.stop` | Stop a container |
 | `docker.container.start` | Start a stopped container |
 | `docker.container.remove` | Remove a container |
-| `docker.container.inspect` | Container details (id/name/status/image/created + `host_config.nano_cpus`/`memory`, used by the control plane's configuration drift detection) |
+| `docker.container.inspect` | Container details (id/name/status/image/created + `host_config.nano_cpus`/`memory`, used by the control plane's configuration drift detection, + `cmd`, used to display applied Postgres tuning flags on `saas_postgres`) |
 | `docker.container.logs` | Container log lines |
 | `docker.container.stats` | CPU/RAM/network/disk metrics |
 | `docker.container.list` | List containers |
@@ -134,6 +134,8 @@ The agent speaks a simple JSON protocol over WebSocket:
 | `saas.instance.deprovision` | Stop and remove instance container + cloudflared sidecar |
 | `saas.postgres.bootstrap` | Idempotently create/restart the per-server `saas_postgres` container (BYOI servers with no SSH access) |
 | `saas.postgres.enable_pitr` | Recreate `saas_postgres` with WAL archiving enabled, for point-in-time recovery |
+| `saas.postgres.retune` | Recreate `saas_postgres` with a control-plane-supplied set of tuning flags, preserving WAL archiving if already enabled |
+| `saas.host.exec_pty` | Open an interactive PTY session on the agent's own host (not container-scoped) — stream_id-keyed, same machinery as `docker.container.exec_pty`, used by the control plane's server-level terminal for agent-connected servers |
 | `tcp.tunnel.open` | Open a raw TCP connection to a target reachable from the agent's Docker host and relay it over the gateway WS (stream_id-keyed, same machinery as PTY streaming plus `stream_pause`/`stream_resume` for flow control) — used by the DB tunnel feature |
 
 ## Development

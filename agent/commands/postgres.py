@@ -40,11 +40,17 @@ class PostgresCommands:
         stopped, no-op if already running. Returns {"db_host": "saas_postgres"}.
 
         Expected params: pg_user, pg_password, network (docker network name
-        shared with tenant app containers).
+        shared with tenant app containers), pg_extra_args (optional list of
+        "key=value" Postgres GUC settings — computed by the control plane's
+        services/postgres_tuning.py from this server's detected resources,
+        never derived here; the agent just appends whatever it's given as
+        additional `-c` flags, same "backend computes, agent stays dumb"
+        split as every other resource-aware decision in this codebase).
         """
         pg_user = params["pg_user"]
         pg_password = params["pg_password"]
         network = params.get("network", "saas_platform_proxy")
+        pg_extra_args = params.get("pg_extra_args") or []
 
         existing = self._get_existing()
         if existing is not None:
@@ -59,7 +65,13 @@ class PostgresCommands:
             existing.start()
             return {"db_host": _CONTAINER_NAME, "status": "restarted"}
 
-        self._run_container(pg_user, pg_password, network, wal_archiving=False)
+        self._run_container(
+            pg_user,
+            pg_password,
+            network,
+            wal_archiving=False,
+            pg_extra_args=pg_extra_args,
+        )
         return {"db_host": _CONTAINER_NAME, "status": "started"}
 
     def enable_pitr(self, params: dict) -> dict:
@@ -73,12 +85,14 @@ class PostgresCommands:
         during the swap is expected, same as any config change requiring a
         Postgres restart.
 
-        Expected params: pg_user, pg_password, network.
+        Expected params: pg_user, pg_password, network, pg_extra_args
+        (optional, see bootstrap() docstring).
         Returns {"status": "already_enabled" | "enabled"}.
         """
         pg_user = params["pg_user"]
         pg_password = params["pg_password"]
         network = params.get("network", "saas_platform_proxy")
+        pg_extra_args = params.get("pg_extra_args") or []
 
         existing = self._get_existing()
         if existing is not None:
@@ -91,8 +105,54 @@ class PostgresCommands:
                 existing.stop()
             existing.remove()
 
-        self._run_container(pg_user, pg_password, network, wal_archiving=True)
+        self._run_container(
+            pg_user,
+            pg_password,
+            network,
+            wal_archiving=True,
+            pg_extra_args=pg_extra_args,
+        )
         return {"status": "enabled"}
+
+    def retune(self, params: dict) -> dict:
+        """Recreate saas_postgres with a fresh, complete set of tuning
+        args, preserving WAL archiving if currently enabled.
+
+        Used when the control plane applies a customer-edited Postgres
+        tuning override (berth-platform services/postgres_tuning.py) —
+        this method doesn't know or validate anything about the values,
+        it only executes the recreate the control plane already decided
+        on (same "backend computes, agent stays dumb" split as bootstrap/
+        enable_pitr above).
+
+        Expected params: pg_user, pg_password, network, pg_extra_args
+        (the COMPLETE tuning arg list, not a partial override — merging
+        is the caller's responsibility).
+        Returns {"status": "retuned", "wal_archiving": bool}.
+        """
+        pg_user = params["pg_user"]
+        pg_password = params["pg_password"]
+        network = params.get("network", "saas_platform_proxy")
+        pg_extra_args = params.get("pg_extra_args") or []
+
+        existing = self._get_existing()
+        wal_archiving = False
+        if existing is not None:
+            existing.reload()
+            cmd = existing.attrs.get("Config", {}).get("Cmd") or []
+            wal_archiving = any("archive_mode=on" in str(part) for part in cmd)
+            if existing.status == "running":
+                existing.stop()
+            existing.remove()
+
+        self._run_container(
+            pg_user,
+            pg_password,
+            network,
+            wal_archiving=wal_archiving,
+            pg_extra_args=pg_extra_args,
+        )
+        return {"status": "retuned", "wal_archiving": wal_archiving}
 
     def _get_existing(self):
         try:
@@ -107,6 +167,7 @@ class PostgresCommands:
         network: str,
         *,
         wal_archiving: bool,
+        pg_extra_args: list[str] | None = None,
     ):
         data_dir = self._data_root / "_pg_data"
         scratch_dir = self._data_root / "_pg_scratch"
@@ -117,7 +178,7 @@ class PostgresCommands:
             str(data_dir): {"bind": "/var/lib/postgresql/data", "mode": "rw"},
             str(scratch_dir): {"bind": "/scratch", "mode": "rw"},
         }
-        command = None
+        command: list[str] | None = None
         if wal_archiving:
             wal_dir = self._data_root / "_pg_wal_archive"
             wal_dir.mkdir(parents=True, exist_ok=True)
@@ -134,6 +195,12 @@ class PostgresCommands:
                 "-c",
                 f"archive_timeout={_ARCHIVE_TIMEOUT_SECONDS}",
             ]
+
+        if pg_extra_args:
+            if command is None:
+                command = ["postgres"]
+            for arg in pg_extra_args:
+                command += ["-c", arg]
 
         self._ensure_network(network)
         try:

@@ -97,6 +97,7 @@ class ContainerCommands:
         c = self._get(params["name_or_id"])
         attrs = c.attrs
         host_config = attrs.get("HostConfig") or {}
+        config = attrs.get("Config") or {}
         return {
             "id": attrs["Id"],
             "name": attrs["Name"].lstrip("/"),
@@ -111,6 +112,12 @@ class ContainerCommands:
                 "nano_cpus": host_config.get("NanoCpus"),
                 "memory": host_config.get("Memory"),
             },
+            # Full command line — added for read-only display of applied
+            # Postgres tuning flags on saas_postgres (control-plane
+            # services/postgres_tuning.py::get_applied_tuning_for_server).
+            # Never contains secrets (env vars, e.g. POSTGRES_PASSWORD, are
+            # a separate Config.Env field, not included here).
+            "cmd": config.get("Cmd") or [],
         }
 
     def logs(self, params: dict) -> dict:

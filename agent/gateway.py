@@ -30,6 +30,15 @@ Protocol:
       {"type": "stream_data",   "stream_id": "...", "data": "<base64>"}
       {"type": "stream_closed", "stream_id": "...", "exit_code": N}
 
+  Host shell PTY extension (berth-platform's server-level terminal for
+  agent-connected servers — routers/terminal.py::server_terminal): same
+  stream_id-keyed queue/dispatch machinery and message shapes as the
+  container PTY above (stream_stdin/stream_resize/stream_close/stream_data/
+  stream_closed, verbatim), only the start method differs — no
+  name_or_id, since it isn't scoped to any container:
+      {"type": "request", ..., "method": "saas.host.exec_pty",
+       "params": {"stream_id": "...", "cols": N, "rows": N}}
+
   TCP tunnel extension (DB tunnel — berth-platform's db_tunnel_manager.py):
     same stream_id-keyed queue/dispatch machinery as PTY above, reusing
     stream_stdin/stream_close/stream_data/stream_closed verbatim — no PTY
@@ -226,6 +235,12 @@ async def _handle_session(
                         ws, executor, request_id, params, active_streams
                     )
                 )
+            elif method == "saas.host.exec_pty":
+                asyncio.create_task(
+                    _handle_host_pty_session(
+                        ws, executor, request_id, params, active_streams
+                    )
+                )
             elif method == "tcp.tunnel.open":
                 asyncio.create_task(
                     _handle_tcp_tunnel_session(
@@ -314,6 +329,87 @@ async def _handle_pty_session(
         )
     except Exception:
         logger.exception("PTY session error for container %s", name_or_id)
+    finally:
+        bridge_task.cancel()
+        active_streams.pop(stream_id, None)
+        with suppress(Exception):
+            await ws.send(
+                _json(
+                    {
+                        "type": "stream_closed",
+                        "stream_id": stream_id,
+                        "exit_code": exit_code,
+                    }
+                )
+            )
+
+
+async def _handle_host_pty_session(
+    ws: websockets.WebSocketClientProtocol,
+    executor: Executor,
+    request_id: str,
+    params: dict,
+    active_streams: dict[str, asyncio.Queue],
+) -> None:
+    """Start a host-level shell session and stream I/O over the gateway WS.
+
+    Mirrors _handle_pty_session almost exactly — same ctrl_q/thread_q bridge,
+    same ack-then-stream shape — only the blocking call differs (no
+    name_or_id: this isn't scoped to a container, see
+    agent/commands/host_shell.py).
+    """
+    stream_id: str = params.get("stream_id", "")
+    cols: int = int(params.get("cols", 220))
+    rows: int = int(params.get("rows", 50))
+
+    ctrl_q: asyncio.Queue = asyncio.Queue(maxsize=256)
+    active_streams[stream_id] = ctrl_q
+
+    thread_q: queue.Queue = queue.Queue(maxsize=256)
+
+    loop = asyncio.get_event_loop()
+
+    async def _bridge() -> None:
+        try:
+            while True:
+                item = await ctrl_q.get()
+                thread_q.put(item)
+                if item[0] == "close":
+                    break
+        except asyncio.CancelledError:
+            thread_q.put(("close",))
+
+    async def _send_data(chunk: bytes) -> None:
+        with suppress(Exception):
+            await ws.send(
+                _json(
+                    {
+                        "type": "stream_data",
+                        "stream_id": stream_id,
+                        "data": base64.b64encode(chunk).decode(),
+                    }
+                )
+            )
+
+    await ws.send(
+        _json({"type": "response", "id": request_id, "result": {"ok": True}})
+    )
+
+    bridge_task = asyncio.create_task(_bridge())
+    exit_code = 0
+
+    try:
+        exit_code = await loop.run_in_executor(
+            _THREAD_POOL,
+            executor.run_host_pty_blocking,
+            cols,
+            rows,
+            thread_q,
+            loop,
+            _send_data,
+        )
+    except Exception:
+        logger.exception("Host PTY session error")
     finally:
         bridge_task.cancel()
         active_streams.pop(stream_id, None)

@@ -10,6 +10,7 @@ import docker
 
 from agent.commands.container import ContainerCommands
 from agent.commands.fs import FsCommands
+from agent.commands.host_shell import HostShellCommands
 from agent.commands.image import ImageCommands
 from agent.commands.instance import InstanceCommands
 from agent.commands.postgres import PostgresCommands
@@ -29,6 +30,7 @@ class Executor:
         self._fs = FsCommands(data_root_path)
         self._image = ImageCommands(self._docker)
         self._tcp_tunnel = TcpTunnelCommands()
+        self._host_shell = HostShellCommands()
 
     def docker_version(self) -> str:
         try:
@@ -112,6 +114,19 @@ class Executor:
         """Blocking PTY session inside a container. Delegates to ContainerCommands."""
         return self._container.run_pty_blocking(
             name_or_id, cols, rows, stdin_q, loop, data_cb
+        )
+
+    def run_host_pty_blocking(
+        self,
+        cols: int,
+        rows: int,
+        stdin_q: Any,
+        loop: asyncio.AbstractEventLoop,
+        data_cb: Any,
+    ) -> int:
+        """Blocking PTY session on the agent's own host. Delegates to HostShellCommands."""
+        return self._host_shell.run_pty_blocking(
+            cols, rows, stdin_q, loop, data_cb
         )
 
     async def open_tcp_tunnel_connection(
