@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD024 MD041 -->
-## Unreleased
+## v0.7.0 (2026-08-04)
 
 ### Feat
 
