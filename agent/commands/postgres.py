@@ -22,7 +22,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _CONTAINER_NAME = "saas_postgres"
-_IMAGE = "postgres:16"
+# Default only — every real call from the control plane passes its own
+# pg_image (derived from Server.postgres_version, berth-platform
+# services/postgres_versions.py). Kept here only so a caller that forgets
+# the param still gets something sane instead of a KeyError, same
+# "backend computes, agent stays dumb" split as pg_extra_args.
+_DEFAULT_IMAGE = "postgres:16"
 
 # Forces a WAL segment switch at least this often even under low write
 # volume, so the archive_command backlog (and therefore the PITR RPO) is
@@ -40,16 +45,20 @@ class PostgresCommands:
         stopped, no-op if already running. Returns {"db_host": "saas_postgres"}.
 
         Expected params: pg_user, pg_password, network (docker network name
-        shared with tenant app containers), pg_extra_args (optional list of
-        "key=value" Postgres GUC settings — computed by the control plane's
-        services/postgres_tuning.py from this server's detected resources,
-        never derived here; the agent just appends whatever it's given as
-        additional `-c` flags, same "backend computes, agent stays dumb"
-        split as every other resource-aware decision in this codebase).
+        shared with tenant app containers), pg_image (optional — Docker
+        image reference, e.g. "postgres:17", derived by the control plane
+        from Server.postgres_version; defaults to postgres:16 if omitted),
+        pg_extra_args (optional list of "key=value" Postgres GUC settings —
+        computed by the control plane's services/postgres_tuning.py from
+        this server's detected resources, never derived here; the agent
+        just appends whatever it's given as additional `-c` flags, same
+        "backend computes, agent stays dumb" split as every other
+        resource-aware decision in this codebase).
         """
         pg_user = params["pg_user"]
         pg_password = params["pg_password"]
         network = params.get("network", "saas_platform_proxy")
+        pg_image = params.get("pg_image") or _DEFAULT_IMAGE
         pg_extra_args = params.get("pg_extra_args") or []
 
         existing = self._get_existing()
@@ -69,6 +78,7 @@ class PostgresCommands:
             pg_user,
             pg_password,
             network,
+            image=pg_image,
             wal_archiving=False,
             pg_extra_args=pg_extra_args,
         )
@@ -85,13 +95,15 @@ class PostgresCommands:
         during the swap is expected, same as any config change requiring a
         Postgres restart.
 
-        Expected params: pg_user, pg_password, network, pg_extra_args
-        (optional, see bootstrap() docstring).
+        Expected params: pg_user, pg_password, network, pg_image (optional,
+        see bootstrap() docstring), pg_extra_args (optional, see
+        bootstrap() docstring).
         Returns {"status": "already_enabled" | "enabled"}.
         """
         pg_user = params["pg_user"]
         pg_password = params["pg_password"]
         network = params.get("network", "saas_platform_proxy")
+        pg_image = params.get("pg_image") or _DEFAULT_IMAGE
         pg_extra_args = params.get("pg_extra_args") or []
 
         existing = self._get_existing()
@@ -109,6 +121,7 @@ class PostgresCommands:
             pg_user,
             pg_password,
             network,
+            image=pg_image,
             wal_archiving=True,
             pg_extra_args=pg_extra_args,
         )
@@ -125,14 +138,18 @@ class PostgresCommands:
         on (same "backend computes, agent stays dumb" split as bootstrap/
         enable_pitr above).
 
-        Expected params: pg_user, pg_password, network, pg_extra_args
-        (the COMPLETE tuning arg list, not a partial override — merging
-        is the caller's responsibility).
+        Expected params: pg_user, pg_password, network, pg_image (optional,
+        see bootstrap() docstring — this is also how the CVE-patch feature
+        applies an update: same image tag every time, always matching the
+        server's fixed postgres_version, never a different major version),
+        pg_extra_args (the COMPLETE tuning arg list, not a partial
+        override — merging is the caller's responsibility).
         Returns {"status": "retuned", "wal_archiving": bool}.
         """
         pg_user = params["pg_user"]
         pg_password = params["pg_password"]
         network = params.get("network", "saas_platform_proxy")
+        pg_image = params.get("pg_image") or _DEFAULT_IMAGE
         pg_extra_args = params.get("pg_extra_args") or []
 
         existing = self._get_existing()
@@ -149,6 +166,7 @@ class PostgresCommands:
             pg_user,
             pg_password,
             network,
+            image=pg_image,
             wal_archiving=wal_archiving,
             pg_extra_args=pg_extra_args,
         )
@@ -166,6 +184,7 @@ class PostgresCommands:
         pg_password: str,
         network: str,
         *,
+        image: str,
         wal_archiving: bool,
         pg_extra_args: list[str] | None = None,
     ):
@@ -203,14 +222,30 @@ class PostgresCommands:
                 command += ["-c", arg]
 
         self._ensure_network(network)
+        # Always pull, even if an image with this tag is already cached
+        # locally — images.get() is a pure local lookup, it never checks
+        # whether the registry has since republished a patched build under
+        # the same floating tag (routine security/point-release rebuilds of
+        # the official image, the exact thing services/postgres_cve_patch.py
+        # on the control plane relies on this method to pick up when it
+        # calls retune() as its apply step). Mirrors server_bootstrap.py's
+        # SSH bash templates, which already run `docker pull` unconditionally
+        # on every bootstrap/retune/enable_pitr — this was the one place
+        # that still only pulled on a cold cache, silently defeating both
+        # regular tuning retunes and the CVE-patch feature for
+        # agent-connected servers.
         try:
-            self._docker.images.get(_IMAGE)
+            self._docker.api.pull(image)
         except Exception:
-            logger.info("Pulling %s", _IMAGE)
-            self._docker.api.pull(_IMAGE)
+            logger.warning(
+                "Could not pull %s (registry unreachable?) — falling back "
+                "to whatever is cached locally, if anything",
+                image,
+                exc_info=True,
+            )
 
         run_kwargs: dict[str, Any] = {
-            "image": _IMAGE,
+            "image": image,
             "name": _CONTAINER_NAME,
             "detach": True,
             "restart_policy": {"Name": "unless-stopped"},

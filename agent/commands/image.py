@@ -15,6 +15,45 @@ class ImageCommands:
     def __init__(self, docker_client: Any) -> None:
         self._docker = docker_client
 
+    def pull(self, params: dict) -> dict:
+        """Pull *image* unconditionally — always a real registry round trip,
+        never a local-cache-only lookup — and return the resulting local
+        image ID.
+
+        Used by the control plane (services/postgres_cve_patch.py,
+        berth-platform) to detect whether a newer build is available under
+        a floating tag (e.g. "postgres:16", which the registry republishes
+        periodically with upstream security/point-release fixes) before
+        deciding whether to apply it. A pure read: this never touches any
+        container, so it's safe to call as often as a caller wants without
+        any recreate/downtime side effect — the caller decides separately
+        whether/when to actually apply an update (e.g. via
+        saas.postgres.retune, which performs the real pull+recreate).
+
+        params:
+          image — Docker image reference (e.g. "postgres:16")
+
+        Returns {"id": "sha256:...", "error": None} on success, or
+        {"id": None, "error": "..."} if the pull or the follow-up lookup
+        failed (network down, registry unreachable, ...).
+        """
+        image: str = params["image"]
+        try:
+            self._docker.api.pull(repository=image)
+        except Exception as exc:
+            logger.warning("Could not pull image %s: %s", image, exc)
+            return {"id": None, "error": str(exc)}
+
+        try:
+            return {"id": self._docker.images.get(image).id, "error": None}
+        except Exception as exc:
+            logger.warning(
+                "Pulled %s but could not read its resulting image ID: %s",
+                image,
+                exc,
+            )
+            return {"id": None, "error": str(exc)}
+
     def extract_file(self, params: dict) -> dict:
         """Run a disposable container from *image* and return the contents of *path*.
 
