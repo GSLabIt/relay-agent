@@ -1,4 +1,33 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Feat
+
+- **Postgres CVE patching + version selection support**: `docker.image.pull`
+  (new, `agent/commands/image.py`) pulls unconditionally and returns the
+  resulting local image ID — used by the control plane
+  (`services/postgres_cve_patch.py`, berth-platform) to detect whether a
+  newer build is available under a floating tag (e.g. `postgres:16`, which
+  the registry republishes periodically with upstream security fixes)
+  without touching any container. `docker.container.inspect` now also
+  surfaces `image_id` (the resolved image ID actually running, distinct
+  from the unchanging `image` tag string) so drift/CVE detection can tell
+  which build is really in use. `saas.postgres.bootstrap`/`enable_pitr`/
+  `retune` accept an optional `pg_image` param (derived by the control
+  plane from `Server.postgres_version`), defaulting to `postgres:16` if
+  omitted, so a server can be provisioned on Postgres 16/17/18.
+
+### Fix
+
+- `saas.postgres.bootstrap`/`enable_pitr`/`retune` now always pull the
+  image before recreating `saas_postgres`, even if an image with that tag
+  is already cached locally — the previous local-cache-only check
+  (`images.get()`) never noticed a registry republish under the same
+  floating tag, silently defeating both regular tuning retunes and the new
+  CVE-patch feature for agent-connected servers. A failed pull now falls
+  back to whatever is cached locally instead of raising, so a transient
+  registry outage doesn't break an otherwise-successful retune.
+
 ## v0.7.0 (2026-08-04)
 
 ### Feat

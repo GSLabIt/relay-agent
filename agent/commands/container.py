@@ -102,6 +102,11 @@ class ContainerCommands:
             "id": attrs["Id"],
             "name": attrs["Name"].lstrip("/"),
             "status": attrs["State"]["Status"],
+            # The reference/tag the container was created with (e.g.
+            # "postgres:16") — stays the same string across a registry
+            # rebuild under a floating tag, so it can't tell drift
+            # detection or CVE-patch detection which underlying build is
+            # actually running. That's "image_id" below.
             "image": attrs["Config"]["Image"],
             "created": attrs["Created"],
             # Added for configuration drift detection (control-plane
@@ -118,6 +123,14 @@ class ContainerCommands:
             # Never contains secrets (env vars, e.g. POSTGRES_PASSWORD, are
             # a separate Config.Env field, not included here).
             "cmd": config.get("Cmd") or [],
+            # The resolved image ID the container is actually running
+            # (top-level Docker attrs "Image", e.g. "sha256:..."), distinct
+            # from the "image" tag string above — this is what changes
+            # when the registry republishes a newer build under the same
+            # floating tag. Added for services/postgres_cve_patch.py
+            # (control-plane) to detect a pending Postgres image update
+            # without recreating anything.
+            "image_id": attrs.get("Image"),
         }
 
     def logs(self, params: dict) -> dict:
