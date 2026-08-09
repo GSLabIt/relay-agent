@@ -1,4 +1,21 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Fix
+
+- `saas.instance.provision` (`agent/commands/instance.py`) built the Odoo
+  container's startup command as bare `["odoo"]`, with no `-d`/`-i`/
+  `--db-filter` at all — so a brand-new BYOI instance's genuinely first
+  boot never installed its own `base` module, coming up against an
+  uninitialized database with no schema. Now builds `["odoo", "-d",
+  db_name, ...]`, appending `-i base` only when the control plane sends
+  `init_base: true` (computed once there via
+  `backup_manager.is_base_module_installed()`, never re-derived locally) —
+  a missing/omitted `init_base` defaults to `False` so an older control
+  plane talking to a newer agent build fails safe instead of risking a
+  reset of the admin password (`-i base` unconditionally reapplies
+  `base`'s `noupdate="1"` seed data on every boot, not just the first).
+
 ## v0.8.1 (2026-08-09)
 
 ### Fix
