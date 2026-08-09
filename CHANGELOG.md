@@ -1,4 +1,32 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Fix
+
+- **fix: rename the per-server dedicated Postgres container from
+  `saas_postgres` to `berth_postgres`** (and the `docker_network`/
+  `network` param fallback from `saas_platform_proxy` to
+  `berth_platform_proxy` — comments/log strings only, plus the matching
+  `saas.instance.provision` default) — counterpart of berth-platform's
+  `Server.saas_postgres_running` -> `berth_postgres_running` column
+  rename, finishing the `saas_*` -> `berth_*` rebrand left out of scope
+  in a previous pass (CLAUDE.md item 89) as "a separate effort if ever
+  requested". Reclassified from a plain naming chore to a fix on review:
+  a server whose `berth_postgres` (formerly `saas_postgres`) container
+  was created by an agent build predating this rename will not be found
+  by `_get_existing()` under the new name — a subsequent `bootstrap`/
+  `enable_pitr`/`retune` call would attempt to create a second container
+  of the same name bind-mounted onto the same `_pg_data` directory as the
+  still-running old one, a genuine dual-writer/data-corruption risk, not
+  just cosmetic drift. Every real call from the control plane already
+  passes its own explicit `network`/`docker_network` param, so the
+  fallback rename itself has no behavioral effect for servers
+  bootstrapped after this change. No such pre-rename servers are known to
+  exist today, but this hasn't been exercised against one; re-provision
+  (or manually `docker rename saas_postgres berth_postgres`) any
+  agent-connected server bootstrapped before this change before running a
+  tuning/PITR/CVE-patch operation against it.
+
 ## v0.8.0 (2026-08-08)
 
 ### Feat

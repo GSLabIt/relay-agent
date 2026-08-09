@@ -118,7 +118,7 @@ class ContainerCommands:
                 "memory": host_config.get("Memory"),
             },
             # Full command line — added for read-only display of applied
-            # Postgres tuning flags on saas_postgres (control-plane
+            # Postgres tuning flags on berth_postgres (control-plane
             # services/postgres_tuning.py::get_applied_tuning_for_server).
             # Never contains secrets (env vars, e.g. POSTGRES_PASSWORD, are
             # a separate Config.Env field, not included here).
