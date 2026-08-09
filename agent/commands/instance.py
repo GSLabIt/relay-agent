@@ -37,7 +37,7 @@ class InstanceCommands:
         slug = params["slug"]
         image = params["image"]
         platform = params.get("platform") or None
-        network = params.get("docker_network", "saas_platform_proxy")
+        network = params.get("docker_network", "berth_platform_proxy")
         domain = params.get("tenant_base_domain", "localhost")
 
         slug_dir = self._data_root / slug

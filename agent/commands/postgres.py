@@ -21,7 +21,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_CONTAINER_NAME = "saas_postgres"
+_CONTAINER_NAME = "berth_postgres"
 # Default only — every real call from the control plane passes its own
 # pg_image (derived from Server.postgres_version, berth-platform
 # services/postgres_versions.py). Kept here only so a caller that forgets
@@ -41,8 +41,8 @@ class PostgresCommands:
         self._data_root = pathlib.Path(data_root_path)
 
     def bootstrap(self, params: dict) -> dict:
-        """Idempotent: create+start saas_postgres if missing, restart if
-        stopped, no-op if already running. Returns {"db_host": "saas_postgres"}.
+        """Idempotent: create+start berth_postgres if missing, restart if
+        stopped, no-op if already running. Returns {"db_host": "berth_postgres"}.
 
         Expected params: pg_user, pg_password, network (docker network name
         shared with tenant app containers), pg_image (optional — Docker
@@ -57,7 +57,7 @@ class PostgresCommands:
         """
         pg_user = params["pg_user"]
         pg_password = params["pg_password"]
-        network = params.get("network", "saas_platform_proxy")
+        network = params.get("network", "berth_platform_proxy")
         pg_image = params.get("pg_image") or _DEFAULT_IMAGE
         pg_extra_args = params.get("pg_extra_args") or []
 
@@ -65,10 +65,10 @@ class PostgresCommands:
         if existing is not None:
             existing.reload()
             if existing.status == "running":
-                logger.info("saas_postgres already running")
+                logger.info("berth_postgres already running")
                 return {"db_host": _CONTAINER_NAME, "status": "already_running"}
             logger.info(
-                "saas_postgres exists but not running (%s) — restarting",
+                "berth_postgres exists but not running (%s) — restarting",
                 existing.status,
             )
             existing.start()
@@ -85,7 +85,7 @@ class PostgresCommands:
         return {"db_host": _CONTAINER_NAME, "status": "started"}
 
     def enable_pitr(self, params: dict) -> dict:
-        """Idempotent: (re)create saas_postgres with WAL archiving enabled.
+        """Idempotent: (re)create berth_postgres with WAL archiving enabled.
 
         Docker doesn't allow adding a bind mount to a running container, so
         this stops+removes the existing one and recreates it against the
@@ -102,7 +102,7 @@ class PostgresCommands:
         """
         pg_user = params["pg_user"]
         pg_password = params["pg_password"]
-        network = params.get("network", "saas_platform_proxy")
+        network = params.get("network", "berth_platform_proxy")
         pg_image = params.get("pg_image") or _DEFAULT_IMAGE
         pg_extra_args = params.get("pg_extra_args") or []
 
@@ -112,7 +112,7 @@ class PostgresCommands:
             cmd = existing.attrs.get("Config", {}).get("Cmd") or []
             if any("archive_mode=on" in str(part) for part in cmd):
                 return {"status": "already_enabled"}
-            logger.info("Recreating saas_postgres with WAL archiving enabled")
+            logger.info("Recreating berth_postgres with WAL archiving enabled")
             if existing.status == "running":
                 existing.stop()
             existing.remove()
@@ -128,7 +128,7 @@ class PostgresCommands:
         return {"status": "enabled"}
 
     def retune(self, params: dict) -> dict:
-        """Recreate saas_postgres with a fresh, complete set of tuning
+        """Recreate berth_postgres with a fresh, complete set of tuning
         args, preserving WAL archiving if currently enabled.
 
         Used when the control plane applies a customer-edited Postgres
@@ -148,7 +148,7 @@ class PostgresCommands:
         """
         pg_user = params["pg_user"]
         pg_password = params["pg_password"]
-        network = params.get("network", "saas_platform_proxy")
+        network = params.get("network", "berth_platform_proxy")
         pg_image = params.get("pg_image") or _DEFAULT_IMAGE
         pg_extra_args = params.get("pg_extra_args") or []
 
@@ -261,7 +261,7 @@ class PostgresCommands:
 
         container = self._docker.containers.run(**run_kwargs)
         logger.info(
-            "saas_postgres started: %s (wal_archiving=%s)",
+            "berth_postgres started: %s (wal_archiving=%s)",
             container.short_id,
             wal_archiving,
         )

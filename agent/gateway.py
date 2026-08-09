@@ -434,7 +434,7 @@ async def _handle_tcp_tunnel_session(
 ) -> None:
     """Open a raw TCP connection to target_host:target_port (reachable from
     this agent's own Docker host — for the DB tunnel feature this is always
-    the local saas_postgres container) and relay bytes over the gateway WS.
+    the local berth_postgres container) and relay bytes over the gateway WS.
 
     Unlike _handle_pty_session, this runs entirely on the event loop — no
     thread pool, no threading.Queue bridge — since asyncio.open_connection

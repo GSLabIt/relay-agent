@@ -1,6 +1,6 @@
 """Raw TCP tunnel to a target reachable from the agent's own Docker host.
 
-Used by the DB tunnel feature (target is always the local saas_postgres
+Used by the DB tunnel feature (target is always the local berth_postgres
 container today, see berth-platform's services/db_tunnel_manager.py) but
 deliberately generic — target_host/target_port are just agent-local network
 coordinates, no Postgres- or Docker-specific assumptions here.
