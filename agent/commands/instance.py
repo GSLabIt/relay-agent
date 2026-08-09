@@ -32,7 +32,7 @@ class InstanceCommands:
         Expected params (built by OdooDriver._provision_via_agent):
           slug, db_name, image, odoo_config_content, config_container_path,
           extra_addons_paths, docker_network, tunnel_token, platform,
-          cpu_cores, ram_mb, hostname, tenant_base_domain
+          cpu_cores, ram_mb, hostname, tenant_base_domain, init_base
         """
         slug = params["slug"]
         image = params["image"]
@@ -109,8 +109,25 @@ class InstanceCommands:
         nano_cpus = int(cpu_cores * 1e9) if cpu_cores else None
         mem_limit = f"{ram_mb}m" if ram_mb else None
 
-        # 9. Build pg_isready wait command (same pattern as control plane docker_manager.py)
-        odoo_cmd = ["odoo"]
+        # 9. Build the odoo command (same pattern as control plane
+        #    docker_manager.spawn_instance). -d/--db-filter mirror what's
+        #    already enforced in odoo.conf (db_name/dbfilter, written above);
+        #    -i base has no config-file equivalent — it's CLI-only. Whether
+        #    to pass it is decided once on the control plane
+        #    (OdooDriver._provision_via_agent / _replace_container_via_agent,
+        #    via backup_manager.is_base_module_installed) and trusted
+        #    verbatim here — the agent never re-derives it locally. Passing
+        #    -i base on every boot (not just a genuinely fresh database)
+        #    unconditionally reapplies base's noupdate="1" data, silently
+        #    resetting the admin password to Odoo's factory default "admin"
+        #    on every restart. A missing/omitted init_base defaults to
+        #    False (never re-init) rather than True, so an older control
+        #    plane talking to a newer agent fails safe.
+        db_name = params["db_name"]
+        odoo_cmd = ["odoo", "-d", db_name]
+        if params.get("init_base"):
+            odoo_cmd += ["-i", "base"]
+        odoo_cmd += ["--db-filter", f"^{db_name}$"]
         _wait = 'until pg_isready -h "$HOST" -p "$PORT" -U "$USER" 2>/dev/null; do sleep 2; done'
         import shlex
 
