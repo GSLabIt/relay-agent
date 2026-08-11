@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import pathlib
+import shlex
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,76 @@ _DEFAULT_IMAGE = "postgres:16"
 # volume, so the archive_command backlog (and therefore the PITR RPO) is
 # bounded independent of actual write activity.
 _ARCHIVE_TIMEOUT_SECONDS = 300
+
+# Always applied, on top of (never instead of) whatever pg_extra_args the
+# control plane computed — mirrors berth-platform backend's
+# services/postgres_tuning.py::BASELINE_POSTGRES_ARGS exactly (same two
+# literal values). Duplicated across the two repos rather than shared,
+# same accepted "~10 lines, small and stable" tradeoff already made
+# elsewhere in this codebase (e.g. the SSH-side quote_tuning_flags itself
+# has no agent-side equivalent to import from). pg_stat_statements: was
+# already relied upon by db_optimizer.py's slow-query analysis, which
+# assumed it was present without ever actually enabling it here — this
+# closes that gap too, not just adds pgaudit. pgaudit.log itself is a
+# PER-ROLE setting (ALTER ROLE ... SET pgaudit.log = ...), applied by
+# db_browser_manager.py at session-mint time, never here — preloading the
+# library is a one-time, cluster-wide, restart-only prerequisite for that,
+# nothing more.
+_BASELINE_POSTGRES_ARGS: list[str] = [
+    "shared_preload_libraries=pg_stat_statements,pgaudit",
+    "log_line_prefix=%m [%p] user=%u,db=%d ",
+]
+
+
+def _postgres_command_line(pg_args: list[str]) -> str:
+    """Shell-quoted "postgres -c 'k=v' -c 'k2=v2' ..." string (leading
+    "postgres" token included) — same shlex.quote-per-token discipline as
+    the backend's postgres_tuning.quote_tuning_flags/_pitr_flags, needed
+    here because the whole thing ends up embedded as text inside a second
+    shell string (see _pgaudit_install_wrapper)."""
+    flags = " ".join(f"-c {shlex.quote(arg)}" for arg in pg_args)
+    return f"postgres {flags}"
+
+
+def _pgaudit_install_wrapper(image: str, postgres_command: str) -> list[str]:
+    """["sh", "-c", "<install pgaudit && exec docker-entrypoint.sh ...>"]
+    — the full docker-py `command=` value for containers.run(), mirroring
+    berth-platform backend's services/server_bootstrap.py::_postgres_run_tail
+    (SSH transport) but built directly as run() args instead of formatted
+    into a bash template string.
+
+    pgaudit isn't preinstalled in the stock postgres:XX image — it already
+    configures the matching PGDG apt repo though (confirmed live against a
+    real postgres:16 container), so it's installed here at every container
+    (re)start rather than via a custom prebuilt image (no registry-publish
+    pipeline for that exists in either repo yet) — same accepted tradeoff
+    already made for the OpenVPN tunnel container's own
+    `apk add --no-cache openvpn` at every start (berth-platform's
+    services/openvpn_tunnel_manager.py).
+
+    docker-entrypoint.sh (still on PATH inside the image) is re-invoked
+    explicitly because the stock image's ENTRYPOINT only special-cases args
+    that look like `postgres`/a flag — anything else, including this
+    `sh -c ...` command itself, it execs verbatim with no init logic
+    (initdb, /docker-entrypoint-initdb.d scripts, etc.) at all. Without
+    this, postgres would start against a data directory nobody ever
+    initialized.
+
+    *postgres_command* is the complete, already shell-quoted "postgres -c
+    'k=v' ..." invocation from _postgres_command_line — this function only
+    wraps it in the apt-get step, never inspects or reorders it. The whole
+    apt-get+exec inner command is shlex.quote()'d as ONE argument to
+    `sh -c` — robust regardless of what characters end up inside it, same
+    defense-in-depth principle as _postgres_command_line itself.
+    """
+    pg_major = image.rsplit(":", 1)[-1]
+    inner = (
+        "apt-get update -qq && "
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
+        f"postgresql-{pg_major}-pgaudit >/dev/null && "
+        f"exec docker-entrypoint.sh {postgres_command}"
+    )
+    return ["sh", "-c", inner]
 
 
 class PostgresCommands:
@@ -197,29 +268,31 @@ class PostgresCommands:
             str(data_dir): {"bind": "/var/lib/postgresql/data", "mode": "rw"},
             str(scratch_dir): {"bind": "/scratch", "mode": "rw"},
         }
-        command: list[str] | None = None
+
+        # BASELINE_POSTGRES_ARGS always first, regardless of wal_archiving/
+        # pg_extra_args — never conditionally short-circuited the way the
+        # old code's `command: list[str] | None = None` was, or a caller
+        # that omits pg_extra_args (e.g. a resource-detection failure on
+        # the control plane side) would silently boot berth_postgres with
+        # no pgaudit and nothing to ever retry it. Same fix already applied
+        # on the SSH transport side (server_bootstrap.py::_postgres_tuning_flags).
+        pg_args: list[str] = list(_BASELINE_POSTGRES_ARGS)
         if wal_archiving:
             wal_dir = self._data_root / "_pg_wal_archive"
             wal_dir.mkdir(parents=True, exist_ok=True)
             volumes[str(wal_dir)] = {"bind": "/wal_archive", "mode": "rw"}
-            command = [
-                "postgres",
-                "-c",
+            pg_args += [
                 "archive_mode=on",
-                "-c",
                 "archive_command=test ! -f /wal_archive/%f "
                 "&& cp %p /wal_archive/%f",
-                "-c",
                 "wal_level=replica",
-                "-c",
                 f"archive_timeout={_ARCHIVE_TIMEOUT_SECONDS}",
             ]
+        pg_args += pg_extra_args or []
 
-        if pg_extra_args:
-            if command is None:
-                command = ["postgres"]
-            for arg in pg_extra_args:
-                command += ["-c", arg]
+        command = _pgaudit_install_wrapper(
+            image, _postgres_command_line(pg_args)
+        )
 
         self._ensure_network(network)
         # Always pull, even if an image with this tag is already cached
@@ -255,9 +328,11 @@ class PostgresCommands:
                 "POSTGRES_USER": pg_user,
                 "POSTGRES_PASSWORD": pg_password,
             },
+            # Always present now — command is never None, since
+            # BASELINE_POSTGRES_ARGS (pgaudit + log_line_prefix) is always
+            # injected regardless of wal_archiving/pg_extra_args.
+            "command": command,
         }
-        if command is not None:
-            run_kwargs["command"] = command
 
         container = self._docker.containers.run(**run_kwargs)
         logger.info(

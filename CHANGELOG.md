@@ -1,4 +1,22 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Feat
+
+- **feat: pgaudit baseline preload for berth_postgres** — `PostgresCommands._run_container`
+  now always boots the dedicated cluster with
+  `shared_preload_libraries=pg_stat_statements,pgaudit` plus a `log_line_prefix`
+  embedding `user=%u,db=%d`, installed via an apt-get wrapper at every
+  container (re)start (pgaudit isn't in the stock `postgres:XX` image),
+  mirroring berth-platform backend's `services/postgres_tuning.py::BASELINE_POSTGRES_ARGS`
+  exactly — needed so the control plane's new pgweb DB-browser query-log
+  feature (per-session `pgaudit.log`, set on the ephemeral role at mint
+  time) has something to log against on agent-connected servers too.
+  `command` is never `None` anymore, closing a real gap: previously a
+  caller with no `wal_archiving` and no `pg_extra_args` skipped the
+  container command override entirely, which — after this — would have
+  booted with no pgaudit and nothing to ever retry it.
+
 ## v0.8.2 (2026-08-09)
 
 ### Fix
