@@ -1,4 +1,32 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Feat
+
+- `_BASELINE_POSTGRES_ARGS` now also preloads `auto_explain` (with
+  `auto_explain.log_min_duration=1000`) alongside the existing
+  `pg_stat_statements`/`pgaudit` preload, and the apt-get install wrapper
+  (renamed `_pgaudit_install_wrapper` → `_postgres_extensions_install_wrapper`
+  since it no longer installs just pgaudit) now also installs
+  `postgresql-{pg_major}-hypopg` and `postgresql-{pg_major}-repack` —
+  counterpart of berth-platform's new pgstattuple/hypopg/pg_repack/auto_explain
+  provisioning support. `pg_repack`'s CLI binary ships in the same apt
+  package and is what the control plane execs directly inside this
+  container for online bloat reclaim. Docker log rotation
+  (`log_config`, 50 MB × 5 files) added to the `berth_postgres` container
+  definition so leaving `pgaudit` enabled on the app role for
+  weeks/months doesn't grow its log file unboundedly.
+
+### Fix
+
+- `_postgres_extensions_install_wrapper` spliced the Postgres major
+  version (parsed from the `image` tag) into the apt-get package list
+  without shell-quoting it, even though the surrounding docstring claimed
+  the whole inner command was "robust regardless of what characters end
+  up inside it" — that guarantee only covered `postgres_command`. Wrapped
+  it in `shlex.quote()`, no behavior change for the normal `"16"/"17"/"18"`
+  case.
+
 ## v0.9.0 (2026-08-11)
 
 ### Feat

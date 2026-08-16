@@ -50,8 +50,14 @@ _ARCHIVE_TIMEOUT_SECONDS = 300
 # library is a one-time, cluster-wide, restart-only prerequisite for that,
 # nothing more.
 _BASELINE_POSTGRES_ARGS: list[str] = [
-    "shared_preload_libraries=pg_stat_statements,pgaudit",
+    "shared_preload_libraries=pg_stat_statements,pgaudit,auto_explain",
     "log_line_prefix=%m [%p] user=%u,db=%d ",
+    # auto_explain: logs the real execution plan for any statement slower
+    # than this threshold — same rationale/threshold as berth-platform
+    # backend's services/postgres_tuning.py::BASELINE_POSTGRES_ARGS,
+    # mirrored here for the same "two repos, no shared import" reason as
+    # the rest of this list. Bundled in the stock postgres:16 image.
+    "auto_explain.log_min_duration=1000",
 ]
 
 
@@ -60,26 +66,33 @@ def _postgres_command_line(pg_args: list[str]) -> str:
     "postgres" token included) — same shlex.quote-per-token discipline as
     the backend's postgres_tuning.quote_tuning_flags/_pitr_flags, needed
     here because the whole thing ends up embedded as text inside a second
-    shell string (see _pgaudit_install_wrapper)."""
+    shell string (see _postgres_extensions_install_wrapper)."""
     flags = " ".join(f"-c {shlex.quote(arg)}" for arg in pg_args)
     return f"postgres {flags}"
 
 
-def _pgaudit_install_wrapper(image: str, postgres_command: str) -> list[str]:
-    """["sh", "-c", "<install pgaudit && exec docker-entrypoint.sh ...>"]
-    — the full docker-py `command=` value for containers.run(), mirroring
-    berth-platform backend's services/server_bootstrap.py::_postgres_run_tail
-    (SSH transport) but built directly as run() args instead of formatted
-    into a bash template string.
+def _postgres_extensions_install_wrapper(
+    image: str, postgres_command: str
+) -> list[str]:
+    """["sh", "-c", "<install pgaudit+hypopg+pg_repack && exec
+    docker-entrypoint.sh ...>"] — the full docker-py `command=` value for
+    containers.run(), mirroring berth-platform backend's
+    services/server_bootstrap.py::_postgres_run_tail (SSH transport) but
+    built directly as run() args instead of formatted into a bash template
+    string. Renamed from _pgaudit_install_wrapper once it started
+    installing more than pgaudit.
 
-    pgaudit isn't preinstalled in the stock postgres:XX image — it already
-    configures the matching PGDG apt repo though (confirmed live against a
-    real postgres:16 container), so it's installed here at every container
-    (re)start rather than via a custom prebuilt image (no registry-publish
-    pipeline for that exists in either repo yet) — same accepted tradeoff
-    already made for the OpenVPN tunnel container's own
+    None of pgaudit/hypopg/pg_repack are preinstalled in the stock
+    postgres:XX image — it already configures the matching PGDG apt repo
+    though (confirmed live against a real postgres:16 container:
+    `apt-cache policy postgresql-16-pgaudit`/`-hypopg`/`-repack` all
+    resolve a real candidate there), so they're installed here at every
+    container (re)start rather than via a custom prebuilt image (no
+    registry-publish pipeline for that exists in either repo yet) — same
+    accepted tradeoff already made for the OpenVPN tunnel container's own
     `apk add --no-cache openvpn` at every start (berth-platform's
-    services/openvpn_tunnel_manager.py).
+    services/openvpn_tunnel_manager.py). pgstattuple/pg_stat_statements/
+    auto_explain need no apt-get step at all — bundled in the stock image.
 
     docker-entrypoint.sh (still on PATH inside the image) is re-invoked
     explicitly because the stock image's ENTRYPOINT only special-cases args
@@ -91,16 +104,27 @@ def _pgaudit_install_wrapper(image: str, postgres_command: str) -> list[str]:
 
     *postgres_command* is the complete, already shell-quoted "postgres -c
     'k=v' ..." invocation from _postgres_command_line — this function only
-    wraps it in the apt-get step, never inspects or reorders it. The whole
-    apt-get+exec inner command is shlex.quote()'d as ONE argument to
-    `sh -c` — robust regardless of what characters end up inside it, same
-    defense-in-depth principle as _postgres_command_line itself.
+    wraps it in the apt-get step, never inspects or reorders it. The
+    resulting `inner` string is passed as ONE argv item to `sh -c` — that
+    only prevents Docker/exec-argv word-splitting on it, it does NOT
+    protect against shell metacharacters *inside* `inner` itself, which
+    `sh -c` still parses as a normal script. `pg_major` is therefore
+    shlex.quote()'d before being spliced into the apt-get package list
+    below — it's expected to always be a plain version tag like "16"
+    today (image is meant to always come from the control plane's
+    validated Server.postgres_version, never raw attacker input), but
+    quoting it here is free and keeps this function honest about its own
+    "robust regardless of what characters end up inside it" claim instead
+    of only being true for postgres_command.
     """
-    pg_major = image.rsplit(":", 1)[-1]
+    pg_major = shlex.quote(image.rsplit(":", 1)[-1])
     inner = (
         "apt-get update -qq && "
         "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
-        f"postgresql-{pg_major}-pgaudit >/dev/null && "
+        f"postgresql-{pg_major}-pgaudit "
+        f"postgresql-{pg_major}-hypopg "
+        f"postgresql-{pg_major}-repack "
+        ">/dev/null && "
         f"exec docker-entrypoint.sh {postgres_command}"
     )
     return ["sh", "-c", inner]
@@ -290,7 +314,7 @@ class PostgresCommands:
             ]
         pg_args += pg_extra_args or []
 
-        command = _pgaudit_install_wrapper(
+        command = _postgres_extensions_install_wrapper(
             image, _postgres_command_line(pg_args)
         )
 
@@ -317,6 +341,16 @@ class PostgresCommands:
                 exc_info=True,
             )
 
+        # No rotation was configured here before the Postgres audit log
+        # feature (berth-platform CLAUDE.md, migration 189) — harmless when
+        # pgaudit only ever logged DB Browser's short-lived ephemeral
+        # sessions, but leaving pgaudit enabled on the app role for
+        # weeks/months (the whole point of that feature) without a bound
+        # would grow this container's log file unboundedly. Same rotation
+        # applied on the SSH transport side (server_bootstrap.py's docker
+        # run templates) — kept consistent across both channels.
+        from docker.types import LogConfig
+
         run_kwargs: dict[str, Any] = {
             "image": image,
             "name": _CONTAINER_NAME,
@@ -328,6 +362,10 @@ class PostgresCommands:
                 "POSTGRES_USER": pg_user,
                 "POSTGRES_PASSWORD": pg_password,
             },
+            "log_config": LogConfig(
+                type=LogConfig.types.JSON,
+                config={"max-size": "50m", "max-file": "5"},
+            ),
             # Always present now — command is never None, since
             # BASELINE_POSTGRES_ARGS (pgaudit + log_line_prefix) is always
             # injected regardless of wal_archiving/pg_extra_args.
