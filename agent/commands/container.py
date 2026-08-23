@@ -45,15 +45,26 @@ class ContainerCommands:
     # ------------------------------------------------------------------
 
     def run(self, params: dict) -> dict:
-        """Spawn a new container. Equivalent to docker run -d."""
+        """Spawn a new container. Equivalent to docker run -d.
+
+        params may include an optional "auth_config" (Docker registry auth
+        dict, e.g. {"username": ..., "password": ...}) used only for the
+        pre-pull below — popped before the rest of params is spread into
+        docker-py's containers.run(), which doesn't accept it as a kwarg.
+        Never logged.
+        """
         volumes = self._resolve_volumes(params.pop("volumes", None) or {})
         platform = params.pop("platform", None)
+        auth_config = params.pop("auth_config", None)
 
         # Pre-pull to handle missing arm64 manifests (same pattern as control plane)
         image = params.get("image", "")
         if image:
             try:
-                pull_kwargs: dict = {"repository": image}
+                pull_kwargs: dict = {
+                    "repository": image,
+                    "auth_config": auth_config,
+                }
                 if platform:
                     pull_kwargs["platform"] = platform
                 self._docker.api.pull(**pull_kwargs)

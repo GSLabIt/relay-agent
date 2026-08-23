@@ -31,15 +31,19 @@ class ImageCommands:
         saas.postgres.retune, which performs the real pull+recreate).
 
         params:
-          image — Docker image reference (e.g. "postgres:16")
+          image       — Docker image reference (e.g. "postgres:16")
+          auth_config — Optional Docker registry auth dict
+                        ({"username": ..., "password": ...}), forwarded
+                        as-is to docker-py's pull. Never logged.
 
         Returns {"id": "sha256:...", "error": None} on success, or
         {"id": None, "error": "..."} if the pull or the follow-up lookup
-        failed (network down, registry unreachable, ...).
+        failed (network down, registry unreachable, bad credentials, ...).
         """
         image: str = params["image"]
+        auth_config: dict | None = params.get("auth_config")
         try:
-            self._docker.api.pull(repository=image)
+            self._docker.api.pull(repository=image, auth_config=auth_config)
         except Exception as exc:
             logger.warning("Could not pull image %s: %s", image, exc)
             return {"id": None, "error": str(exc)}

@@ -1,4 +1,21 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Feat
+
+- `docker.image.pull` and `docker.container.run` accept an optional
+  `auth_config` param (Docker registry auth dict), forwarded as-is to the
+  underlying `docker-py` pull in both — needed so the control plane can
+  relay per-customer/private-registry credentials (already resolved
+  server-side via the `RegistryProvider` table) down to a BYOI agent
+  host for the upcoming "redeploy image" feature, instead of the pull
+  only ever working "by accident" when the image happens to be already
+  cached locally. `container.py::run()` pops `auth_config` from `params`
+  before spreading the rest into `containers.run()`, which doesn't
+  accept it as a kwarg — same treatment already given to `platform`.
+  Never logged (it carries a registry token). No behavior change for
+  existing callers that don't pass it.
+
 ## v0.10.0 (2026-08-16)
 
 ### Feat
