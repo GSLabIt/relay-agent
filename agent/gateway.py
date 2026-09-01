@@ -88,6 +88,7 @@ _PTY_POOL = concurrent.futures.ThreadPoolExecutor(
 # unbounded asyncio tasks / streams / subprocesses.
 _MAX_CONCURRENT_COMMANDS = 32
 _MAX_ACTIVE_STREAMS = 64
+_POSTGRES_RECREATE_TIMEOUT = 360.0
 # Ceiling on WS->target bytes buffered for one tcp.tunnel stream while the
 # target is draining slower than the control plane pushes. Legit traffic
 # (a \copy burst) never sits this deep; a stuck/hostile peer gets the
@@ -461,7 +462,13 @@ async def _dispatch_message(
                     request_id,
                     method,
                     params,
-                    command_timeout,
+                    max(command_timeout, _POSTGRES_RECREATE_TIMEOUT)
+                    if method
+                    in {
+                        "saas.postgres.enable_pitr",
+                        "saas.postgres.retune",
+                    }
+                    else command_timeout,
                     command_future,
                 )
             )

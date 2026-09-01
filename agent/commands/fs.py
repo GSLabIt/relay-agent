@@ -13,10 +13,12 @@ from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
-# Cap a single fs.read_bytes chunk and fs.list_dir response so one request
+# Cap a single fs.read_bytes chunk and each fs.list_dir page so one request
 # can't make the agent allocate (and base64-encode) an unbounded blob.
 _MAX_READ_CHUNK = 8 * 1024 * 1024
-_MAX_LIST_ENTRIES = 200_000
+_MAX_LIST_ENTRIES = 20_000
+_MAX_LIST_FILES = 10_000
+_MAX_LIST_CURSOR_DEPTH = 128
 
 
 class FsCommands:
@@ -178,25 +180,57 @@ class FsCommands:
         Returns an empty list (not an error) when *path* does not exist —
         callers use this to back up tenant directories that may legitimately
         be empty or not yet created (e.g. an instance with no addons repos).
+
+        The result is paginated by both visited entries and returned files.
+        Pass ``next_cursor`` back as ``cursor`` until it is null. The cursor
+        is a validated DFS stack, so pagination resumes without rescanning
+        the whole tree and without retaining server-side state.
         """
         raw_path = params["path"]
+        pagination_supported = params.get("pagination") is True
+        cursor = params.get("cursor")
+        if cursor is None:
+            stack: list[dict[str, str]] = [{"path": "", "after": ""}]
+        else:
+            stack = self._validate_list_cursor(cursor)
+
         try:
             root_fd = self._open_dir(raw_path)
         except FileNotFoundError:
-            return {"files": []}
+            return {"files": [], "truncated": False, "next_cursor": None}
+        else:
+            os.close(root_fd)
+
         files: list[dict] = []
-        truncated = False
         visited = 0
-        stack: list[tuple[int, str]] = [(root_fd, "")]
-        while stack and not truncated:
-            current_fd, prefix = stack.pop()
+        page_full = False
+        while stack and not page_full:
+            frame = stack[-1]
+            relative_dir = frame["path"]
+            page_path = (
+                f"{raw_path.rstrip('/')}/{relative_dir}"
+                if relative_dir
+                else raw_path
+            )
             try:
-                for name in os.listdir(current_fd):
+                current_fd = self._open_dir(page_path)
+            except OSError:
+                stack.pop()
+                continue
+
+            descended = False
+            try:
+                names = sorted(
+                    name
+                    for name in os.listdir(current_fd)
+                    if name > frame["after"]
+                )
+                for name in names:
+                    frame["after"] = name
                     visited += 1
-                    if visited > _MAX_LIST_ENTRIES:
-                        truncated = True
-                        break
-                    relative = f"{prefix}/{name}" if prefix else name
+                    relative = (
+                        f"{relative_dir}/{name}" if relative_dir else name
+                    )
                     try:
                         info = os.stat(
                             name, dir_fd=current_fd, follow_symlinks=False
@@ -206,17 +240,85 @@ class FsCommands:
                                 {"path": relative, "size": info.st_size}
                             )
                         elif stat.S_ISDIR(info.st_mode):
-                            child_fd = os.open(
-                                name, self._dir_flags(), dir_fd=current_fd
-                            )
-                            stack.append((child_fd, relative))
+                            if len(stack) >= _MAX_LIST_CURSOR_DEPTH:
+                                raise ValueError(
+                                    "Directory nesting exceeds fs.list_dir "
+                                    "cursor limit"
+                                )
+                            stack.append({"path": relative, "after": ""})
+                            descended = True
+                            if visited >= _MAX_LIST_ENTRIES:
+                                page_full = True
+                            break
                     except OSError:
-                        continue
+                        pass
+
+                    if (
+                        visited >= _MAX_LIST_ENTRIES
+                        or len(files) >= _MAX_LIST_FILES
+                    ):
+                        page_full = True
+                        break
             finally:
                 os.close(current_fd)
-        for pending_fd, _ in stack:
-            os.close(pending_fd)
-        return {"files": files, "truncated": truncated}
+
+            if page_full:
+                break
+            if descended:
+                continue
+            stack.pop()
+
+        next_cursor = {"version": 1, "stack": stack} if stack else None
+        if next_cursor is not None and not pagination_supported:
+            raise ValueError(
+                "fs.list_dir exceeds one page; client must support pagination"
+            )
+        return {
+            "files": files,
+            "truncated": next_cursor is not None,
+            "next_cursor": next_cursor,
+        }
+
+    @staticmethod
+    def _validate_list_cursor(cursor: object) -> list[dict[str, str]]:
+        if not isinstance(cursor, dict) or cursor.get("version") != 1:
+            raise ValueError("Invalid fs.list_dir cursor")
+        raw_stack = cursor.get("stack")
+        if (
+            not isinstance(raw_stack, list)
+            or not 1 <= len(raw_stack) <= _MAX_LIST_CURSOR_DEPTH
+        ):
+            raise ValueError("Invalid fs.list_dir cursor stack")
+
+        stack: list[dict[str, str]] = []
+        for index, raw_frame in enumerate(raw_stack):
+            if not isinstance(raw_frame, dict):
+                raise ValueError("Invalid fs.list_dir cursor frame")
+            relative = raw_frame.get("path")
+            after = raw_frame.get("after")
+            if not isinstance(relative, str) or not isinstance(after, str):
+                raise ValueError("Invalid fs.list_dir cursor frame")
+            if relative:
+                path = Path(relative)
+                if path.is_absolute() or any(
+                    part in ("", ".", "..") for part in path.parts
+                ):
+                    raise ValueError("Invalid fs.list_dir cursor path")
+            if "/" in after or "\x00" in after:
+                raise ValueError("Invalid fs.list_dir cursor position")
+            if index == 0 and relative != "":
+                raise ValueError("Invalid fs.list_dir cursor root")
+            if index:
+                parent = stack[index - 1]
+                expected = (
+                    f"{parent['path']}/{parent['after']}"
+                    if parent["path"]
+                    else parent["after"]
+                )
+                if relative != expected:
+                    raise ValueError("Invalid fs.list_dir cursor ancestry")
+            stack.append({"path": relative, "after": after})
+        return stack
 
     def read_bytes(self, params: dict) -> dict:
         """Read a chunk of a file as base64, for chunked download.

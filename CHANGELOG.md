@@ -1,4 +1,29 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Fix
+
+- **`fs.list_dir` protocol pagination** (follow-up to the v0.11.1
+  hardening). The v0.11.1 entry cap (200k) silently truncated large
+  trees — a backup could miss files with no error. The recursive listing
+  now uses stateless DFS cursor pagination: each response carries a
+  `next_cursor` (a validated DFS stack, no server-side state) that the
+  caller passes back as `cursor` until it is null. Per-page bounds lowered
+  to 20k visited entries / 10k returned files; nesting depth capped at 128.
+  A client that does not send `pagination: true` and hits a partial page
+  gets a `ValueError` instead of a silently truncated listing (fail
+  closed).
+- **Postgres recreate commit deadline**. `saas.postgres.enable_pitr` /
+  `retune` gain a 300-second internal commit deadline that forces
+  rollback/removal of a replacement container that is not ready in time,
+  plus a finalize reserve so the rollback itself is not cut off. The
+  gateway routes those two methods to a dedicated 360-second protocol
+  timeout so the extended work is not killed mid-rollback.
+- **Postgres mutation serialization**. `bootstrap` / `enable_pitr` /
+  `retune` now take a non-blocking mutation lock — overlapping
+  control-plane requests get "already running" instead of racing two
+  `berth_postgres` container replacements.
+
 ## v0.11.1 (2026-09-01)
 
 ### Fix

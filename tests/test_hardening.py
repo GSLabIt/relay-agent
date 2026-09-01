@@ -163,11 +163,81 @@ def test_list_dir_entry_cap_counts_all_entries() -> None:
         orig = fsmod._MAX_LIST_ENTRIES
         fsmod._MAX_LIST_ENTRIES = 10
         try:
-            out = fs.list_dir({"path": root})
+            cursor = None
+            pages = 0
+            while True:
+                params = {"path": root, "pagination": True}
+                if cursor is not None:
+                    params["cursor"] = cursor
+                out = fs.list_dir(params)
+                pages += 1
+                assert out["files"] == []
+                cursor = out["next_cursor"]
+                if cursor is None:
+                    break
         finally:
             fsmod._MAX_LIST_ENTRIES = orig
-        assert out["truncated"] is True
-        assert out["files"] == []
+        assert pages > 1
+        assert out["truncated"] is False
+
+
+def test_list_dir_pagination_returns_every_file_once() -> None:
+    import agent.commands.fs as fsmod
+
+    with tempfile.TemporaryDirectory() as root:
+        fs = FsCommands(root)
+        expected = []
+        for directory in ("a", "b", "b/nested"):
+            os.makedirs(os.path.join(root, directory), exist_ok=True)
+            for index in range(7):
+                relative = f"{directory}/f{index}.txt"
+                expected.append(relative)
+                with open(os.path.join(root, relative), "w") as file_obj:
+                    file_obj.write(relative)
+
+        original_entries = fsmod._MAX_LIST_ENTRIES
+        original_files = fsmod._MAX_LIST_FILES
+        fsmod._MAX_LIST_ENTRIES = 5
+        fsmod._MAX_LIST_FILES = 3
+        try:
+            cursor = None
+            actual = []
+            while True:
+                params = {"path": root, "pagination": True}
+                if cursor is not None:
+                    params["cursor"] = cursor
+                out = fs.list_dir(params)
+                actual.extend(entry["path"] for entry in out["files"])
+                cursor = out["next_cursor"]
+                if cursor is None:
+                    break
+        finally:
+            fsmod._MAX_LIST_ENTRIES = original_entries
+            fsmod._MAX_LIST_FILES = original_files
+
+        assert sorted(actual) == sorted(expected)
+        assert len(actual) == len(set(actual))
+
+
+def test_list_dir_large_tree_fails_closed_for_legacy_client() -> None:
+    import agent.commands.fs as fsmod
+
+    with tempfile.TemporaryDirectory() as root:
+        fs = FsCommands(root)
+        for index in range(5):
+            with open(os.path.join(root, f"f{index}"), "w") as file_obj:
+                file_obj.write("x")
+        original = fsmod._MAX_LIST_FILES
+        fsmod._MAX_LIST_FILES = 2
+        try:
+            try:
+                fs.list_dir({"path": root})
+            except ValueError as exc:
+                assert "must support pagination" in str(exc)
+            else:
+                raise AssertionError("legacy client received a partial listing")
+        finally:
+            fsmod._MAX_LIST_FILES = original
 
 
 def test_redact() -> None:
@@ -374,6 +444,41 @@ def test_command_timeout_keeps_underlying_slot() -> None:
     __import__("asyncio").run(scenario())
 
 
+def test_postgres_recreate_uses_extended_protocol_timeout() -> None:
+    class Ws:
+        def __init__(self) -> None:
+            self.messages = []
+
+        async def send(self, message) -> None:
+            self.messages.append(__import__("json").loads(message))
+
+    class FakeExecutor:
+        def dispatch(self, method, params):
+            threading.Event().wait(0.05)
+            return {"status": "retuned"}
+
+    async def scenario() -> None:
+        sess = _Session()
+        ws = Ws()
+        raw = __import__("json").dumps(
+            {
+                "type": "request",
+                "id": "retune",
+                "method": "saas.postgres.retune",
+                "params": {},
+            }
+        )
+        await _dispatch_message(ws, FakeExecutor(), 0.01, sess, raw)
+        for _ in range(20):
+            await __import__("asyncio").sleep(0.01)
+            if ws.messages:
+                break
+        assert ws.messages[0]["result"] == {"status": "retuned"}
+        await sess.close()
+
+    __import__("asyncio").run(scenario())
+
+
 def test_offer_never_blocks() -> None:
     q: queue.Queue = queue.Queue(maxsize=2)
     _offer(q, ("data", b"a"))
@@ -412,7 +517,7 @@ def test_postgres_recreate_rolls_back_on_startup_failure() -> None:
     command._run_container = lambda *args, **kwargs: Partial()
     command._get_existing = lambda: Partial()
 
-    def fail_ready(container, pg_user):
+    def fail_ready(container, pg_user, timeout=120.0):
         raise RuntimeError("replacement failed")
 
     command._wait_ready = fail_ready
@@ -425,6 +530,7 @@ def test_postgres_recreate_rolls_back_on_startup_failure() -> None:
             image="postgres:16",
             wal_archiving=False,
             pg_extra_args=[],
+            commit_deadline=float("inf"),
         )
     except RuntimeError:
         pass
@@ -438,6 +544,58 @@ def test_postgres_recreate_rolls_back_on_startup_failure() -> None:
         "old.rename:berth_postgres",
         "old.start",
     ]
+
+
+def test_postgres_commit_deadline_removes_late_new_container() -> None:
+    calls = []
+
+    class Container:
+        def remove(self, **kwargs):
+            calls.append(kwargs)
+
+    command = PostgresCommands(docker_client=None, data_root_path="/tmp")
+    command._run_container = lambda *args, **kwargs: Container()
+
+    def miss_deadline(*args, **kwargs):
+        raise TimeoutError("deadline")
+
+    command._wait_ready_before = miss_deadline
+    try:
+        command._create_with_deadline(
+            "postgres",
+            "secret",
+            "network",
+            image="postgres:16",
+            wal_archiving=False,
+            pg_extra_args=[],
+            commit_deadline=float("inf"),
+        )
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("late replacement should not be committed")
+    assert calls == [{"force": True}]
+
+
+def test_postgres_mutations_are_serialized() -> None:
+    command = PostgresCommands(docker_client=None, data_root_path="/tmp")
+    command._mutation_lock.acquire()
+    try:
+        for operation in (
+            command.bootstrap,
+            command.enable_pitr,
+            command.retune,
+        ):
+            try:
+                operation({})
+            except RuntimeError as exc:
+                assert "already running" in str(exc)
+            else:
+                raise AssertionError(
+                    "concurrent Postgres mutation was accepted"
+                )
+    finally:
+        command._mutation_lock.release()
 
 
 def _run() -> None:

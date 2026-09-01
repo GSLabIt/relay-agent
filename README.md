@@ -58,7 +58,7 @@ damage (not a deliberate attacker who already holds the token):
 | `saas.instance.*` slug validated | `^[a-z0-9][a-z0-9_-]{0,62}$` before it touches the filesystem |
 | Relative `volumes` in `docker.container.run` | rejected if they escape `DATA_ROOT_PATH` or traverse symlinks (absolute paths pass — trusted) |
 | Host shell env | allowlisted — the agent's own `TOKEN` is never inherited by a spawned shell |
-| `fs.read_bytes` / `fs.list_dir` | per-request size / entry caps |
+| `fs.read_bytes` / `fs.list_dir` | per-request size caps; recursive listings use stateless cursor pagination |
 | Per-connection limits | max concurrent commands, max active streams, per-stream and aggregate buffered-byte ceilings; streams and their threads/subprocesses are torn down when the WebSocket closes |
 
 - **Token-based auth**: each server gets a unique revocable token
@@ -150,7 +150,7 @@ The agent speaks a simple JSON protocol over WebSocket:
 | `fs.write_text` | Write a UTF-8 text file at a path inside DATA_ROOT_PATH |
 | `fs.write_bytes` | Write/append binary data (base64-encoded) — use for chunked uploads |
 | `fs.mkdir` | Create a directory inside DATA_ROOT_PATH |
-| `fs.list_dir` | Recursively list files (relative path + size) under a directory inside DATA_ROOT_PATH |
+| `fs.list_dir` | Recursively list files (relative path + size) under a directory inside DATA_ROOT_PATH; pass each `next_cursor` back as `cursor` until null |
 | `fs.read_bytes` | Read a chunk of a file as base64 (`offset`/`length`, returns `eof`) — use for chunked downloads |
 | `saas.instance.provision` | High-level: create dirs + write config + pull image + spawn container |
 | `saas.instance.deprovision` | Stop and remove instance container + cloudflared sidecar |

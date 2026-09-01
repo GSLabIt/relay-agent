@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import pathlib
 import shlex
+import threading
 import time
 from contextlib import suppress
 from typing import Any
@@ -36,6 +37,8 @@ _DEFAULT_IMAGE = "postgres:16"
 # volume, so the archive_command backlog (and therefore the PITR RPO) is
 # bounded independent of actual write activity.
 _ARCHIVE_TIMEOUT_SECONDS = 300
+_RECREATE_COMMIT_DEADLINE_SECONDS = 300.0
+_RECREATE_FINALIZE_RESERVE_SECONDS = 65.0
 
 # Always applied, on top of (never instead of) whatever pg_extra_args the
 # control plane computed — mirrors berth-platform backend's
@@ -136,8 +139,17 @@ class PostgresCommands:
     def __init__(self, docker_client: Any, data_root_path: str) -> None:
         self._docker = docker_client
         self._data_root = pathlib.Path(data_root_path)
+        self._mutation_lock = threading.Lock()
 
     def bootstrap(self, params: dict) -> dict:
+        if not self._mutation_lock.acquire(blocking=False):
+            raise RuntimeError("Another Postgres mutation is already running")
+        try:
+            return self._bootstrap(params)
+        finally:
+            self._mutation_lock.release()
+
+    def _bootstrap(self, params: dict) -> dict:
         """Idempotent: create+start berth_postgres if missing, restart if
         stopped, no-op if already running. Returns {"db_host": "berth_postgres"}.
 
@@ -182,6 +194,14 @@ class PostgresCommands:
         return {"db_host": _CONTAINER_NAME, "status": "started"}
 
     def enable_pitr(self, params: dict) -> dict:
+        if not self._mutation_lock.acquire(blocking=False):
+            raise RuntimeError("Another Postgres mutation is already running")
+        try:
+            return self._enable_pitr(params)
+        finally:
+            self._mutation_lock.release()
+
+    def _enable_pitr(self, params: dict) -> dict:
         """Idempotent: (re)create berth_postgres with WAL archiving enabled.
 
         Docker doesn't allow adding a bind mount to a running container, so
@@ -203,6 +223,7 @@ class PostgresCommands:
         pg_image = params.get("pg_image") or _DEFAULT_IMAGE
         pg_extra_args = params.get("pg_extra_args") or []
 
+        commit_deadline = time.monotonic() + _RECREATE_COMMIT_DEADLINE_SECONDS
         existing = self._get_existing()
         if existing is not None:
             existing.reload()
@@ -222,20 +243,29 @@ class PostgresCommands:
                 image=pg_image,
                 wal_archiving=True,
                 pg_extra_args=pg_extra_args,
+                commit_deadline=commit_deadline,
             )
         else:
-            container = self._run_container(
+            self._create_with_deadline(
                 pg_user,
                 pg_password,
                 network,
                 image=pg_image,
                 wal_archiving=True,
                 pg_extra_args=pg_extra_args,
+                commit_deadline=commit_deadline,
             )
-            self._wait_ready(container, pg_user)
         return {"status": "enabled"}
 
     def retune(self, params: dict) -> dict:
+        if not self._mutation_lock.acquire(blocking=False):
+            raise RuntimeError("Another Postgres mutation is already running")
+        try:
+            return self._retune(params)
+        finally:
+            self._mutation_lock.release()
+
+    def _retune(self, params: dict) -> dict:
         """Recreate berth_postgres with a fresh, complete set of tuning
         args, preserving WAL archiving if currently enabled.
 
@@ -260,6 +290,7 @@ class PostgresCommands:
         pg_image = params.get("pg_image") or _DEFAULT_IMAGE
         pg_extra_args = params.get("pg_extra_args") or []
 
+        commit_deadline = time.monotonic() + _RECREATE_COMMIT_DEADLINE_SECONDS
         existing = self._get_existing()
         wal_archiving = False
         if existing is not None:
@@ -276,18 +307,47 @@ class PostgresCommands:
                 image=pg_image,
                 wal_archiving=wal_archiving,
                 pg_extra_args=pg_extra_args,
+                commit_deadline=commit_deadline,
             )
         else:
-            container = self._run_container(
+            self._create_with_deadline(
                 pg_user,
                 pg_password,
                 network,
                 image=pg_image,
                 wal_archiving=wal_archiving,
                 pg_extra_args=pg_extra_args,
+                commit_deadline=commit_deadline,
             )
-            self._wait_ready(container, pg_user)
         return {"status": "retuned", "wal_archiving": wal_archiving}
+
+    def _create_with_deadline(
+        self,
+        pg_user: str,
+        pg_password: str,
+        network: str,
+        *,
+        image: str,
+        wal_archiving: bool,
+        pg_extra_args: list[str],
+        commit_deadline: float,
+    ) -> None:
+        if time.monotonic() >= commit_deadline:
+            raise TimeoutError("Postgres replacement commit deadline exceeded")
+        container = self._run_container(
+            pg_user,
+            pg_password,
+            network,
+            image=image,
+            wal_archiving=wal_archiving,
+            pg_extra_args=pg_extra_args,
+        )
+        try:
+            self._wait_ready_before(container, pg_user, commit_deadline)
+        except Exception:
+            with suppress(Exception):
+                container.remove(force=True)
+            raise
 
     def _recreate_with_rollback(
         self,
@@ -299,8 +359,11 @@ class PostgresCommands:
         image: str,
         wal_archiving: bool,
         pg_extra_args: list[str],
+        commit_deadline: float,
     ) -> None:
         """Keep the old definition until its replacement is ready."""
+        if time.monotonic() >= commit_deadline:
+            raise TimeoutError("Postgres replacement commit deadline exceeded")
         was_running = existing.status == "running"
         rollback_name = f"{_CONTAINER_NAME}_rollback_{existing.short_id}"
         if was_running:
@@ -321,7 +384,14 @@ class PostgresCommands:
                 wal_archiving=wal_archiving,
                 pg_extra_args=pg_extra_args,
             )
-            self._wait_ready(replacement, pg_user)
+            self._wait_ready_before(replacement, pg_user, commit_deadline)
+            if (
+                time.monotonic() + _RECREATE_FINALIZE_RESERVE_SECONDS
+                >= commit_deadline
+            ):
+                raise TimeoutError(
+                    "Postgres replacement has insufficient commit margin"
+                )
         except Exception:
             partial = self._get_existing()
             if partial is not None:
@@ -340,6 +410,16 @@ class PostgresCommands:
                     "could not be removed",
                     rollback_name,
                 )
+
+    def _wait_ready_before(
+        self, container, pg_user: str, commit_deadline: float
+    ) -> None:
+        remaining = commit_deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Postgres replacement commit deadline exceeded")
+        self._wait_ready(container, pg_user, timeout=min(120.0, remaining))
+        if time.monotonic() > commit_deadline:
+            raise TimeoutError("Postgres replacement commit deadline exceeded")
 
     @staticmethod
     def _wait_ready(container, pg_user: str, timeout: float = 120.0) -> None:
