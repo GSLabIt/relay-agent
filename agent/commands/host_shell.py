@@ -76,11 +76,16 @@ class HostShellCommands:
         stdin_q: Any,
         loop: Any,
         data_cb: Any,
+        stop_event: Any,
+        started_cb: Any,
+        data_drained_cb: Any,
     ) -> int:
         """Run an interactive shell on the host. Blocks until the shell exits.
 
-        Same stdin_q/loop/data_cb contract as
-        ContainerCommands.run_pty_blocking — see that docstring.
+        Same stdin_q/loop/data_cb/stop_event contract as
+        ContainerCommands.run_pty_blocking — see that docstring. stop_event
+        is set by the gateway on WS disconnect so this thread (and the
+        shell + its process group) doesn't outlive the session.
 
         Returns the shell's exit code.
         """
@@ -110,7 +115,9 @@ class HostShellCommands:
         os.close(slave_fd)
 
         os.set_blocking(master_fd, False)
-        stop_event = threading.Event()
+        started_cb()
+        # Gateway-owned event (shared): a WS disconnect sets it and this
+        # thread — plus the shell's whole process group — is torn down.
 
         def _reader() -> None:
             try:
@@ -148,6 +155,8 @@ class HostShellCommands:
                         os.write(master_fd, item[1])
                     except OSError:
                         break
+                    finally:
+                        data_drained_cb(len(item[1]))
                 elif kind == "resize":
                     _, new_cols, new_rows = item
                     _set_winsize(master_fd, new_rows, new_cols)

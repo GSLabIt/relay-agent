@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
+
+from agent.security import redact
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +32,45 @@ class ContainerCommands:
 
         The control plane sends paths like {"tenants/acme/filestore": {...}}.
         The agent resolves them against DATA_ROOT_PATH on the local filesystem.
-        Absolute paths are passed through unchanged.
+
+        A *relative* path that escapes DATA_ROOT_PATH (`..`) is rejected —
+        the control plane never sends one. Absolute paths are passed through:
+        the control plane is a trusted host administrator here (it can
+        already run `docker.container.run` with any config), see README
+        "Security model" — this only stops an accidental traversal, not a
+        deliberate one.
         """
         if not volumes:
             return {}
+        root = os.path.realpath(self._data_root)
         resolved = {}
         for host_path, spec in volumes.items():
             if not host_path.startswith("/"):
-                host_path = f"{self._data_root}/{host_path}"
+                joined = os.path.normpath(os.path.join(root, host_path))
+                if joined != root and not joined.startswith(root + os.sep):
+                    raise ValueError(
+                        f"Relative volume path {host_path!r} escapes "
+                        f"DATA_ROOT_PATH"
+                    )
+                cur = root
+                for part in os.path.relpath(joined, root).split(os.sep):
+                    if part == ".":
+                        continue
+                    cur = os.path.join(cur, part)
+                    if os.path.lexists(cur) and os.path.islink(cur):
+                        raise ValueError(
+                            f"Relative volume path {host_path!r} "
+                            "traverses a symlink"
+                        )
+                real_joined = os.path.realpath(joined)
+                if real_joined != root and not real_joined.startswith(
+                    root + os.sep
+                ):
+                    raise ValueError(
+                        f"Relative volume path {host_path!r} escapes "
+                        "DATA_ROOT_PATH through a symlink"
+                    )
+                host_path = real_joined
             resolved[host_path] = spec
         return resolved
 
@@ -69,7 +103,9 @@ class ContainerCommands:
                     pull_kwargs["platform"] = platform
                 self._docker.api.pull(**pull_kwargs)
             except Exception as exc:
-                logger.warning("Pre-pull failed for %s: %s", image, exc)
+                logger.warning(
+                    "Pre-pull failed for %s: %s", image, redact(str(exc))
+                )
 
         run_kwargs: dict = {
             "detach": True,
@@ -101,7 +137,7 @@ class ContainerCommands:
         try:
             self._get(name_or_id).remove(force=force)
         except Exception as exc:
-            logger.warning("Remove %s: %s", name_or_id, exc)
+            logger.warning("Remove %s: %s", name_or_id, redact(str(exc)))
         return {}
 
     def inspect(self, params: dict) -> dict:
@@ -257,6 +293,9 @@ class ContainerCommands:
         stdin_q: Any,
         loop: Any,
         data_cb: Any,
+        stop_event: Any,
+        started_cb: Any,
+        data_drained_cb: Any,
     ) -> int:
         """Run an interactive PTY inside a container. Blocks until the process exits.
 
@@ -264,6 +303,10 @@ class ContainerCommands:
           ("data",  bytes)           — stdin bytes to forward
           ("resize", cols, rows)     — terminal resize
           ("close",)                 — graceful shutdown
+
+        stop_event is a threading.Event set by the gateway to force this
+        thread to exit when the session ends (WS disconnect) — without it a
+        dropped connection leaves the exec running.
 
         data_cb is an async callable(bytes) scheduled on *loop* via
         asyncio.run_coroutine_threadsafe.
@@ -294,8 +337,10 @@ class ContainerCommands:
         # Unwrap the underlying socket for non-blocking select/recv/sendall.
         raw_sock = getattr(sock_wrapper, "_sock", sock_wrapper)
         raw_sock.setblocking(False)
+        started_cb()
 
-        stop_event = threading.Event()
+        # Gateway-owned event, shared so a WS disconnect can stop this
+        # thread — the reader also sets it on EOF to end the session.
 
         def _reader() -> None:
             try:
@@ -332,6 +377,8 @@ class ContainerCommands:
                         raw_sock.sendall(item[1])
                     except Exception:
                         break
+                    finally:
+                        data_drained_cb(len(item[1]))
                 elif kind == "resize":
                     _, new_cols, new_rows = item
                     try:

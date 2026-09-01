@@ -29,19 +29,41 @@ leaves your server.
 
 ## Security model
 
-| What the agent can do | What the agent cannot do |
+**The control plane (and anyone holding the agent token) is a fully
+trusted host administrator.** The agent mounts your Docker socket, so it
+can — by design — do anything Docker can: run a privileged container,
+bind-mount `/`, open a shell on the host (`saas.host.exec_pty`), read and
+write any tenant's data. The agent is *not* a sandbox and does not enforce
+tenant isolation on its raw Docker interface. Treat the token exactly as
+you would `root` SSH access to the box.
+
+What that means in practice:
+
+- **Store the token like a root credential.** Anyone who obtains it gets
+  host-admin control while it is valid.
+- **Use verified `wss://`.** The token is sent as a bearer header on the
+  connection upgrade; only `SSL_VERIFY=false` (dev only) disables
+  certificate verification, which would let a network attacker capture it.
+- **Revoke immediately if leaked** — delete the token from the dashboard.
+- **Run the agent on a host you are willing to give the control plane** —
+  ideally single-tenant, or one whose other workloads you accept the
+  control plane can reach.
+
+Within that model, the agent still applies guardrails against *accidental*
+damage (not a deliberate attacker who already holds the token):
+
+| Guardrail | Notes |
 |---|---|
-| Create/stop/remove containers | Run arbitrary shell commands on the host |
-| Read container logs and stats | Modify system configuration |
-| Pull Docker images | Access host filesystem outside DATA_ROOT_PATH |
-| Run commands inside tenant containers (`exec_run`) | Access other tenant data |
-| Write files within DATA_ROOT_PATH (tenant data) | |
-| List containers on the Docker socket | |
+| `fs.*` paths confined to `DATA_ROOT_PATH` | rejects `..`, absolute escapes, and symlinked path components |
+| `saas.instance.*` slug validated | `^[a-z0-9][a-z0-9_-]{0,62}$` before it touches the filesystem |
+| Relative `volumes` in `docker.container.run` | rejected if they escape `DATA_ROOT_PATH` or traverse symlinks (absolute paths pass — trusted) |
+| Host shell env | allowlisted — the agent's own `TOKEN` is never inherited by a spawned shell |
+| `fs.read_bytes` / `fs.list_dir` | per-request size / entry caps |
+| Per-connection limits | max concurrent commands, max active streams, per-stream and aggregate buffered-byte ceilings; streams and their threads/subprocesses are torn down when the WebSocket closes |
 
 - **Token-based auth**: each server gets a unique revocable token
 - **Open source**: this code is auditable — no hidden behaviour
 - **No inbound ports**: only outbound WebSocket from your server to the platform
-- **Revocable**: delete the token from the dashboard to immediately block the agent
 
 ## Installation
 

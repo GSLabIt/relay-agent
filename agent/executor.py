@@ -22,7 +22,10 @@ logger = logging.getLogger(__name__)
 
 class Executor:
     def __init__(self, data_root_path: str) -> None:
-        self._docker = docker.from_env()
+        # Bound daemon/socket calls as a second line of defence. Gateway
+        # admission remains occupied until the real worker completes, but
+        # a dead daemon must not pin all command slots forever.
+        self._docker = docker.from_env(timeout=60)
         self._container = ContainerCommands(self._docker, data_root_path)
         self._instance = InstanceCommands(self._docker, data_root_path)
         self._postgres = PostgresCommands(self._docker, data_root_path)
@@ -37,6 +40,14 @@ class Executor:
             return self._docker.version().get("Version", "unknown")
         except Exception:
             return "unknown"
+
+    def container_exists(self, name_or_id: str) -> bool:
+        try:
+            container = self._docker.containers.get(name_or_id)
+            container.reload()
+            return container.status == "running"
+        except Exception:
+            return False
 
     def dispatch(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Route a method call to the appropriate command handler.
@@ -110,10 +121,26 @@ class Executor:
         stdin_q: Any,
         loop: asyncio.AbstractEventLoop,
         data_cb: Any,
+        stop_event: Any,
+        started_cb: Any,
+        data_drained_cb: Any,
     ) -> int:
-        """Blocking PTY session inside a container. Delegates to ContainerCommands."""
+        """Blocking PTY session inside a container. Delegates to ContainerCommands.
+
+        stop_event (threading.Event) is set by the gateway when the session
+        must end (WS closed, session torn down) — the blocking loop polls it
+        so the thread actually exits instead of outliving the connection.
+        """
         return self._container.run_pty_blocking(
-            name_or_id, cols, rows, stdin_q, loop, data_cb
+            name_or_id,
+            cols,
+            rows,
+            stdin_q,
+            loop,
+            data_cb,
+            stop_event,
+            started_cb,
+            data_drained_cb,
         )
 
     def run_host_pty_blocking(
@@ -123,10 +150,20 @@ class Executor:
         stdin_q: Any,
         loop: asyncio.AbstractEventLoop,
         data_cb: Any,
+        stop_event: Any,
+        started_cb: Any,
+        data_drained_cb: Any,
     ) -> int:
         """Blocking PTY session on the agent's own host. Delegates to HostShellCommands."""
         return self._host_shell.run_pty_blocking(
-            cols, rows, stdin_q, loop, data_cb
+            cols,
+            rows,
+            stdin_q,
+            loop,
+            data_cb,
+            stop_event,
+            started_cb,
+            data_drained_cb,
         )
 
     async def open_tcp_tunnel_connection(

@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 import pathlib
 import shlex
+import time
+from contextlib import suppress
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -207,19 +209,30 @@ class PostgresCommands:
             cmd = existing.attrs.get("Config", {}).get("Cmd") or []
             if any("archive_mode=on" in str(part) for part in cmd):
                 return {"status": "already_enabled"}
+            # Pull BEFORE stop+remove: if the new image can't be obtained
+            # (pull fails and nothing cached) recreating would leave
+            # Postgres down with no way back to the old container.
+            self._ensure_image_available(pg_image)
             logger.info("Recreating berth_postgres with WAL archiving enabled")
-            if existing.status == "running":
-                existing.stop()
-            existing.remove()
-
-        self._run_container(
-            pg_user,
-            pg_password,
-            network,
-            image=pg_image,
-            wal_archiving=True,
-            pg_extra_args=pg_extra_args,
-        )
+            self._recreate_with_rollback(
+                existing,
+                pg_user,
+                pg_password,
+                network,
+                image=pg_image,
+                wal_archiving=True,
+                pg_extra_args=pg_extra_args,
+            )
+        else:
+            container = self._run_container(
+                pg_user,
+                pg_password,
+                network,
+                image=pg_image,
+                wal_archiving=True,
+                pg_extra_args=pg_extra_args,
+            )
+            self._wait_ready(container, pg_user)
         return {"status": "enabled"}
 
     def retune(self, params: dict) -> dict:
@@ -253,25 +266,127 @@ class PostgresCommands:
             existing.reload()
             cmd = existing.attrs.get("Config", {}).get("Cmd") or []
             wal_archiving = any("archive_mode=on" in str(part) for part in cmd)
-            if existing.status == "running":
-                existing.stop()
-            existing.remove()
-
-        self._run_container(
-            pg_user,
-            pg_password,
-            network,
-            image=pg_image,
-            wal_archiving=wal_archiving,
-            pg_extra_args=pg_extra_args,
-        )
+            # Pull BEFORE stop+remove — see enable_pitr().
+            self._ensure_image_available(pg_image)
+            self._recreate_with_rollback(
+                existing,
+                pg_user,
+                pg_password,
+                network,
+                image=pg_image,
+                wal_archiving=wal_archiving,
+                pg_extra_args=pg_extra_args,
+            )
+        else:
+            container = self._run_container(
+                pg_user,
+                pg_password,
+                network,
+                image=pg_image,
+                wal_archiving=wal_archiving,
+                pg_extra_args=pg_extra_args,
+            )
+            self._wait_ready(container, pg_user)
         return {"status": "retuned", "wal_archiving": wal_archiving}
+
+    def _recreate_with_rollback(
+        self,
+        existing,
+        pg_user: str,
+        pg_password: str,
+        network: str,
+        *,
+        image: str,
+        wal_archiving: bool,
+        pg_extra_args: list[str],
+    ) -> None:
+        """Keep the old definition until its replacement is ready."""
+        was_running = existing.status == "running"
+        rollback_name = f"{_CONTAINER_NAME}_rollback_{existing.short_id}"
+        if was_running:
+            existing.stop()
+        try:
+            existing.rename(rollback_name)
+        except Exception:
+            if was_running:
+                with suppress(Exception):
+                    existing.start()
+            raise
+        try:
+            replacement = self._run_container(
+                pg_user,
+                pg_password,
+                network,
+                image=image,
+                wal_archiving=wal_archiving,
+                pg_extra_args=pg_extra_args,
+            )
+            self._wait_ready(replacement, pg_user)
+        except Exception:
+            partial = self._get_existing()
+            if partial is not None:
+                with suppress(Exception):
+                    partial.remove(force=True)
+            existing.rename(_CONTAINER_NAME)
+            if was_running:
+                existing.start()
+            raise
+        else:
+            try:
+                existing.remove()
+            except Exception:
+                logger.warning(
+                    "Replacement is healthy but rollback container %s "
+                    "could not be removed",
+                    rollback_name,
+                )
+
+    @staticmethod
+    def _wait_ready(container, pg_user: str, timeout: float = 120.0) -> None:
+        """Wait until the replacement accepts Postgres connections."""
+        deadline = time.monotonic() + timeout
+        last_output = ""
+        while time.monotonic() < deadline:
+            container.reload()
+            if container.status in {"exited", "dead", "removing"}:
+                raise RuntimeError(
+                    f"Replacement Postgres stopped ({container.status})"
+                )
+            result = container.exec_run(["pg_isready", "-U", pg_user])
+            if result.exit_code == 0:
+                return
+            output = result.output or b""
+            last_output = output.decode("utf-8", errors="replace")[-500:]
+            time.sleep(1)
+        raise TimeoutError(
+            f"Replacement Postgres did not become ready: {last_output}"
+        )
 
     def _get_existing(self):
         try:
             return self._docker.containers.get(_CONTAINER_NAME)
         except Exception:
             return None
+
+    def _ensure_image_available(self, image: str) -> None:
+        """Pull *image*; raise if the pull fails AND nothing is cached
+        locally. A transient registry outage with a usable cached image is
+        tolerated (same fallback as _run_container's own pull)."""
+        try:
+            self._docker.api.pull(image)
+            return
+        except Exception:
+            logger.warning(
+                "Could not pull %s before recreate; checking local cache",
+                image,
+            )
+        try:
+            self._docker.images.get(image)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cannot recreate berth_postgres: image {image!r} is "
+                f"neither pullable nor cached locally ({exc})"
+            ) from exc
 
     def _run_container(
         self,
@@ -338,7 +453,6 @@ class PostgresCommands:
                 "Could not pull %s (registry unreachable?) — falling back "
                 "to whatever is cached locally, if anything",
                 image,
-                exc_info=True,
             )
 
         # No rotation was configured here before the Postgres audit log

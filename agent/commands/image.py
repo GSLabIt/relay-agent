@@ -6,6 +6,8 @@ import logging
 import shlex
 from typing import Any
 
+from agent.security import redact
+
 logger = logging.getLogger(__name__)
 
 _NOT_FOUND = "__SAAS_NOT_FOUND__"
@@ -45,18 +47,20 @@ class ImageCommands:
         try:
             self._docker.api.pull(repository=image, auth_config=auth_config)
         except Exception as exc:
-            logger.warning("Could not pull image %s: %s", image, exc)
-            return {"id": None, "error": str(exc)}
+            message = redact(str(exc))
+            logger.warning("Could not pull image %s: %s", image, message)
+            return {"id": None, "error": message}
 
         try:
             return {"id": self._docker.images.get(image).id, "error": None}
         except Exception as exc:
+            message = redact(str(exc))
             logger.warning(
                 "Pulled %s but could not read its resulting image ID: %s",
                 image,
-                exc,
+                message,
             )
-            return {"id": None, "error": str(exc)}
+            return {"id": None, "error": message}
 
     def extract_file(self, params: dict) -> dict:
         """Run a disposable container from *image* and return the contents of *path*.
@@ -88,7 +92,11 @@ class ImageCommands:
             try:
                 self._docker.api.pull(**pull_kwargs)
             except Exception as exc:
-                logger.warning("Could not pull image %s: %s", image, exc)
+                logger.warning(
+                    "Could not pull image %s: %s",
+                    image,
+                    redact(str(exc)),
+                )
                 return {"content": None}
 
         cmd = [
@@ -113,6 +121,9 @@ class ImageCommands:
             return {"content": content}
         except Exception as exc:
             logger.warning(
-                "extract_file failed for %s:%s — %s", image, path, exc
+                "extract_file failed for %s:%s — %s",
+                image,
+                path,
+                redact(str(exc)),
             )
             return {"content": None}

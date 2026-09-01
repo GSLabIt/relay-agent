@@ -1,4 +1,102 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Fix
+
+- **Security & reliability hardening** (full-scope audit of the agent
+  package). The threat model is unchanged — the control plane is a
+  fully trusted host administrator by design (`docker.container.run` +
+  `saas.host.exec_pty` already give it host-root-equivalent authority) —
+  but several guardrails against *accidental* damage and denial-of-service
+  were missing or broken. README "Security model" rewritten to state the
+  trust assumption plainly instead of the obsolete "cannot run arbitrary
+  shell commands / cannot access host filesystem outside DATA_ROOT_PATH"
+  table.
+  - `saas.instance.provision`: the `slug` param was joined onto
+    `DATA_ROOT_PATH` to build directories that get written to *and*
+    bind-mounted into a container, with no validation — `../../etc/x` or an
+    absolute value escaped the data root. Now validated
+    (`^[a-z0-9][a-z0-9_-]{0,62}$`) before any filesystem use.
+  - `docker.container.run`: a *relative* `volumes` key containing `..` was
+    concatenated onto `DATA_ROOT_PATH` unchecked. Now rejected if it
+    escapes the root or traverses a symlink (absolute paths still pass —
+    trusted control plane).
+  - `fs._safe_path`: rewritten to reject any symlink component *at or
+    below* `DATA_ROOT_PATH` (not just ones whose target escapes — a
+    planted `link -> ../other-tenant` whose target stays in-root was
+    previously accepted, because `Path.resolve()` collapsed it away before
+    the check). Symlinks *above* the root (mount symlinks, macOS
+    `/var`→`/private/var`) are still followed transparently.
+    Filesystem operations now traverse from an open root directory fd with
+    `O_NOFOLLOW`, closing the check/use rename race as well as static
+    symlink redirects.
+  - `fs.read_bytes`: a negative `length` meant "read the whole file"
+    (`file.read(-1)`), and a large positive one was uncapped — a single
+    request could load an arbitrarily large file into memory + base64.
+    Now capped at 8 MiB per chunk; non-positive length falls back to the
+    4 MiB default.
+  - `fs.list_dir`: recursive listing had no entry limit and followed
+    symlinks. Now capped (200k entries, `truncated` flag in the response),
+    skips symlinks, and tolerates a file vanishing mid-scan instead of
+    failing the whole listing.
+  - **WebSocket session teardown**: PTY, host-shell and TCP-tunnel tasks
+    (and their threads / subprocesses / sockets) were fire-and-forget with
+    no references retained — a disconnect left them running, and
+    reconnect/disconnect cycles piled up orphans. Sessions now track every
+    spawned task and, on close, set a shared stop event (so a PTY's
+    blocking thread actually exits — cancelling the awaiting asyncio task
+    does not), signal every stream closed, and cancel + await all tasks.
+  - **Event-loop blocking**: the PTY control bridge called a blocking
+    `queue.Queue.put()` from a coroutine — a full queue (e.g. all PTY
+    workers busy) would freeze the entire event loop (pings, dispatch,
+    tunnels, teardown). Now a non-blocking put that drops
+    stdin/resize on a full queue (same accepted tradeoff as the existing
+    bounded `ctrl_q`) and force-makes room for the close sentinel.
+  - **Worker-pool starvation**: PTY / host-shell sessions ran in the same
+    4-worker pool as command dispatch, so a few interactive sessions could
+    block all commands. They now use a dedicated 16-worker pool.
+  - **Stream-ID collisions**: `stream_id` was neither required non-empty
+    nor checked for uniqueness before replacing the shared-state entry, and
+    cleanup `pop`'d unconditionally — two sessions could cross-wire input
+    or evict each other. Now empty/duplicate ids are rejected with a
+    JSON-RPC error, and cleanup only removes an entry that is still its own.
+  - **TCP tunnel memory**: the WS→target queue was deliberately unbounded
+    (a bounded drop-on-full queue would desync the DB wire protocol). It is
+    now bounded at 4 MiB per stream and 16 MiB across the whole session — a
+    peer that outruns the target's drain rate has its stream closed cleanly
+    rather than dropped (desync) or allowed to exhaust memory.
+  - **Non-transactional Postgres recreate**: `saas.postgres.enable_pitr` /
+    `retune` stopped and removed `berth_postgres` before the new image was
+    guaranteed obtainable — and later startup failures still left the
+    database down. The old definition is now retained under a rollback
+    name until the replacement passes `pg_isready`; failures remove the
+    partial replacement, restore the old name, and restart it.
+  - **Admission limits**: per-connection caps on concurrent commands (32,
+    checked *before* the task is spawned so a burst can't create unbounded
+    pending tasks each holding its full params — excess requests get a
+    `-32000` error), active streams (64, claimed before task creation), plus
+    the byte ceilings above. Timed-out commands retain their admission slot
+    until the underlying executor future really exits. A stream that hits a
+    ceiling is marked closing and further frames for it are dropped.
+  - **Malformed-frame resilience**: non-object JSON, invalid base64 in
+    `stream_stdin`, and non-dict `params` no longer raise out of the session
+    loop; invalid params receive `-32602` instead of being rewritten to an
+    empty object.
+  - **PTY startup failures**: a container-scoped PTY now claims its stream
+    slot (enforcing the active-stream cap) *before* the container-exists
+    lookup, so a burst of `exec_pty` requests can't queue unbounded lookups
+    in the command pool. PTYs acknowledge only after the worker signals
+    that its Docker socket or host subprocess was created, and container
+    validation now requires the container to be running.
+  - **Error-string redaction**: bearer tokens / `password=…` fragments in
+    exception messages sent back to the control plane (and logged) are now
+    best-effort scrubbed.
+  - New `tests/test_hardening.py` — self-checks for path and symlink safety,
+    slug and relative-volume validation, read clamps, `list_dir` entry cap,
+    redaction, pre-spawn admission, non-object-params rejection, PTY
+    ack-after-start, executor timeout lifetime, aggregate buffering, stream
+    collisions, non-blocking offers, and Postgres recreate rollback.
+
 ## v0.11.0 (2026-08-23)
 
 ### Feat

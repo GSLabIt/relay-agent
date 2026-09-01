@@ -12,9 +12,26 @@ import pathlib
 import re
 from typing import Any
 
+from agent.security import redact
+
 logger = logging.getLogger(__name__)
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# A tenant slug is only ever a lowercased identifier on the control-plane
+# side (berth-platform routers/instances.py). Validating it here anyway:
+# the slug is joined onto DATA_ROOT_PATH to build directories that get
+# written to *and* bind-mounted into a container, so `../../etc` or an
+# absolute value would escape the data root (pathlib drops the left side
+# on an absolute join) — defense in depth against any control-plane bug
+# that lets an unsanitized value through.
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+
+
+def _safe_slug(slug: object) -> str:
+    if not isinstance(slug, str) or not _SLUG_RE.match(slug):
+        raise ValueError(f"Invalid instance slug: {slug!r}")
+    return slug
 
 
 class InstanceCommands:
@@ -34,7 +51,7 @@ class InstanceCommands:
           extra_addons_paths, docker_network, tunnel_token, platform,
           cpu_cores, ram_mb, hostname, tenant_base_domain, init_base
         """
-        slug = params["slug"]
+        slug = _safe_slug(params["slug"])
         image = params["image"]
         platform = params.get("platform") or None
         network = params.get("docker_network", "berth_platform_proxy")
@@ -246,5 +263,9 @@ class InstanceCommands:
             logger.info("Cloudflared sidecar started: %s", cf.short_id)
             return cf.id
         except Exception as exc:
-            logger.warning("Could not spawn cloudflared for %s: %s", slug, exc)
+            logger.warning(
+                "Could not spawn cloudflared for %s: %s",
+                slug,
+                redact(str(exc)),
+            )
             return None
