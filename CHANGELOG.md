@@ -21,15 +21,16 @@
     concatenated onto `DATA_ROOT_PATH` unchecked. Now rejected if it
     escapes the root or traverses a symlink (absolute paths still pass —
     trusted control plane).
-  - `fs._safe_path`: rewritten to reject any symlink component *at or
-    below* `DATA_ROOT_PATH` (not just ones whose target escapes — a
-    planted `link -> ../other-tenant` whose target stays in-root was
-    previously accepted, because `Path.resolve()` collapsed it away before
-    the check). Symlinks *above* the root (mount symlinks, macOS
-    `/var`→`/private/var`) are still followed transparently.
-    Filesystem operations now traverse from an open root directory fd with
-    `O_NOFOLLOW`, closing the check/use rename race as well as static
-    symlink redirects.
+  - `fs.*` path safety: the old `Path.resolve()`-based check accepted a
+    planted `link -> ../other-tenant` whose target stayed in-root (resolve
+    collapsed the symlink away before containment was checked). Every
+    `fs.*` operation now derives lexical components below the canonical
+    root (`_relative_parts`) and traverses them from an already-open root
+    directory fd with `O_NOFOLLOW` — a symlink anywhere at or below the
+    root aborts the operation (`ELOOP` → `ValueError`), and there is no
+    resolve/open gap for a rename race to slip through. Symlinks *above*
+    the root (mount symlinks, macOS `/var`→`/private/var`) are still
+    followed transparently.
   - `fs.read_bytes`: a negative `length` meant "read the whole file"
     (`file.read(-1)`), and a large positive one was uncapped — a single
     request could load an arbitrarily large file into memory + base64.

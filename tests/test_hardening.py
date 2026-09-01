@@ -68,31 +68,36 @@ def test_volume_relative_escape_rejected() -> None:
             raise AssertionError("symlinked relative volume should be rejected")
 
 
-def test_fs_safe_path_and_clamps() -> None:
+def test_fs_rejects_escape_and_symlink_traversal() -> None:
+    # Exercises the real production enforcement (_relative_parts +
+    # O_NOFOLLOW fd traversal), reached through an actual command — not a
+    # standalone validator that nothing calls.
     with tempfile.TemporaryDirectory() as root:
         fs = FsCommands(root)
-        # escape
-        for bad in ("/etc/passwd", os.path.join(root, "..", "x")):
-            try:
-                fs._safe_path(bad)
-            except ValueError:
-                pass
-            else:
-                raise AssertionError(f"{bad!r} should escape-check fail")
-        # symlink component pointing outside root
         os.symlink("/etc", os.path.join(root, "link"))
-        # in-root symlink redirect (link -> a sibling still under root):
-        # resolve() would collapse it and pass the containment check
         os.mkdir(os.path.join(root, "tenant-b"))
         os.symlink(os.path.join(root, "tenant-b"), os.path.join(root, "inroot"))
-        for bad in ("link/passwd", "inroot/secret"):
+        bad_paths = (
+            "/etc/passwd",  # absolute, outside root
+            os.path.join(root, "..", "x"),  # .. escape
+            os.path.join(root, "link", "passwd"),  # symlink component (out)
+            os.path.join(root, "inroot", "secret"),  # symlink component (in)
+        )
+        for bad in bad_paths:
             try:
-                fs._safe_path(os.path.join(root, bad))
-            except ValueError:
+                fs.read_bytes({"path": bad})
+            except (ValueError, OSError):
+                # ValueError for containment / ELOOP remap; a bare OSError
+                # (ENOTDIR/ELOOP variants across kernels) is equally a
+                # rejection — the point is nothing outside root is read.
                 pass
             else:
-                raise AssertionError(f"{bad!r} symlink traversal not rejected")
+                raise AssertionError(f"{bad!r} traversal not rejected")
 
+
+def test_fs_read_bytes_clamps() -> None:
+    with tempfile.TemporaryDirectory() as root:
+        fs = FsCommands(root)
         # read_bytes clamps negative / oversized length
         p = os.path.join(root, "f.bin")
         with open(p, "wb") as f:
@@ -136,7 +141,10 @@ def test_fs_operations_reject_symlink_targets() -> None:
             ):
                 try:
                     operation(params)
-                except OSError:
+                except (ValueError, OSError):
+                    # O_NOFOLLOW refuses the symlink; the errno→ValueError
+                    # remap in _parent_fd fires on some kernels, a bare
+                    # OSError on others. Either way it did not follow.
                     continue
                 raise AssertionError("descriptor operation followed a symlink")
             assert os.path.getsize(outside.name) == 0

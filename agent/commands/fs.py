@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import logging
 import os
 import stat
@@ -22,44 +23,6 @@ class FsCommands:
     def __init__(self, data_root_path: str) -> None:
         self._data_root_input = Path(os.path.abspath(data_root_path))
         self._data_root = Path(data_root_path).resolve()
-
-    def _safe_path(self, raw: str) -> Path:
-        """Verify *raw* stays within DATA_ROOT_PATH and return it resolved.
-
-        Raises ValueError for any path that would escape the data root
-        (via ``..``, an absolute value, or a symlink target) or that
-        traverses a symlink *at or below* the data root.
-
-        Symlinks *above* the data root (e.g. macOS ``/var`` → ``/private/var``,
-        or ``DATA_ROOT_PATH=/data`` where ``/data`` is a mount symlink) are
-        followed transparently — only components inside the root are
-        forbidden, so a planted ``link -> ../other-tenant`` under the root
-        can't redirect a write even though its target stays in-root.
-        """
-        root = str(self._data_root)
-        raw_path = Path(raw)
-        if not raw_path.is_absolute():
-            raw_path = self._data_root / raw_path
-
-        parts = Path(os.path.normpath(raw_path)).parts
-        cur = parts[0]  # filesystem anchor ("/")
-        inside = False
-        for part in parts[1:]:
-            cur = os.path.join(cur, part)
-            # Check strictly-below-root components only: the root itself may
-            # legitimately be a mount symlink; components above it are
-            # followed transparently.
-            if inside and os.path.islink(cur):
-                raise ValueError(f"Path {raw!r} traverses a symlink")
-            if not inside:
-                real_cur = os.path.realpath(cur)
-                if real_cur == root or real_cur.startswith(root + os.sep):
-                    inside = True
-
-        final = os.path.realpath(raw_path)
-        if final != root and not final.startswith(root + os.sep):
-            raise ValueError(f"Path {raw!r} is outside DATA_ROOT_PATH {root!r}")
-        return Path(final)
 
     def _relative_parts(self, raw: str) -> tuple[str, ...]:
         """Return a lexical path below the canonical data root.
@@ -121,7 +84,7 @@ class FsCommands:
                 fd = next_fd
             yield fd, parts[-1]
         except OSError as exc:
-            if exc.errno in (40,):  # ELOOP: O_NOFOLLOW rejected a symlink
+            if exc.errno == errno.ELOOP:  # O_NOFOLLOW rejected a symlink
                 raise ValueError(f"Path {raw!r} traverses a symlink") from exc
             raise
         finally:
@@ -136,8 +99,10 @@ class FsCommands:
                 os.close(fd)
                 fd = next_fd
             return fd
-        except Exception:
+        except OSError as exc:
             os.close(fd)
+            if exc.errno == errno.ELOOP:
+                raise ValueError(f"Path {raw!r} traverses a symlink") from exc
             raise
 
     def write_text(self, params: dict) -> dict:
@@ -193,7 +158,14 @@ class FsCommands:
                     os.mkdir(part, mode=mode, dir_fd=fd)
                 except FileExistsError:
                     pass
-                next_fd = os.open(part, self._dir_flags(), dir_fd=fd)
+                try:
+                    next_fd = os.open(part, self._dir_flags(), dir_fd=fd)
+                except OSError as exc:
+                    if exc.errno == errno.ELOOP:
+                        raise ValueError(
+                            f"Path {raw_path!r} traverses a symlink"
+                        ) from exc
+                    raise
                 os.close(fd)
                 fd = next_fd
         finally:
