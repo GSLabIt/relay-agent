@@ -81,6 +81,9 @@ class InstanceCommands:
             pull_kwargs: dict = {"repository": image}
             if platform:
                 pull_kwargs["platform"] = platform
+            auth_config = params.get("auth_config")
+            if auth_config is not None:
+                pull_kwargs["auth_config"] = auth_config
             self._docker.api.pull(**pull_kwargs)
 
         # 5. Build volumes (relative paths resolved by ContainerCommands._resolve_volumes,
