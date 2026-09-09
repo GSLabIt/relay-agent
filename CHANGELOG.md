@@ -1,4 +1,12 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Fix
+
+- **TLS delle istanze** — le route Traefik Odoo rispettano l’hostname
+  configurato e dichiarano il resolver ACME, evitando il certificato default
+  autofirmato di Traefik.
+
 ## v0.11.2 (2026-09-01)
 
 ### Fix

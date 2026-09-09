@@ -202,7 +202,9 @@ class InstanceCommands:
         for stale in (container_name, f"{container_name}_cloudflared"):
             try:
                 self._docker.containers.get(stale).remove(force=True)
-                logger.info("Removed stale container %s before re-provision", stale)
+                logger.info(
+                    "Removed stale container %s before re-provision", stale
+                )
             except Exception:  # noqa: BLE001 — NotFound or already gone
                 pass
 
