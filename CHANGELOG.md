@@ -1,4 +1,12 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## v0.12.1 (2026-09-09)
+
+### Fix
+
+- **Addon Odoo baked nell'immagine** — durante il provisioning l'agent scopre
+  automaticamente i repository OCA presenti nell'immagine e li aggiunge agli
+  `addons_path` insieme agli addon custom del tenant.
+
 ## v0.11.9 (2026-09-09)
 
 ### Fix
