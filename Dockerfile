@@ -8,7 +8,10 @@ COPY agent/ ./agent/
 
 # Docker socket access requires group membership or root. Callers should pass
 # --group-add $(stat -c '%g' /var/run/docker.sock) to avoid running as root.
-RUN groupadd -r agent && useradd -r -g agent agent
+# Odoo tenant images run as UID 1000 and write to the host-mounted tenant
+# directories. Keep the relay user aligned so newly-created directories are
+# writable by the Odoo process without world-writable permissions.
+RUN groupadd -r -g 1000 agent && useradd -r -u 1000 -g agent agent
 USER agent
 
 ENTRYPOINT ["python", "-m", "agent"]
