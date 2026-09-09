@@ -7,6 +7,7 @@ import errno
 import logging
 import os
 import stat
+import tarfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -172,6 +173,45 @@ class FsCommands:
                 fd = next_fd
         finally:
             os.close(fd)
+        return {}
+
+    def archive(self, params: dict) -> dict:
+        """Create a tar archive of a data-root directory on the agent.
+
+        The archive is intentionally uncompressed: Odoo filestores are mostly
+        already-compressed binary assets, and avoiding gzip saves CPU while
+        reducing thousands of per-file bridge calls to a few chunk reads.
+        """
+        source = self._relative_parts(params["source"])
+        destination = params["destination"]
+        if not source:
+            raise ValueError("Archive source must be below DATA_ROOT_PATH")
+        source_path = self._data_root.joinpath(*source)
+        if not source_path.exists():
+            return {"size_bytes": 0, "exists": False}
+        if not source_path.is_dir():
+            raise NotADirectoryError(str(source_path))
+        destination_path = self._data_root.joinpath(
+            *self._relative_parts(destination)
+        )
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(destination_path, mode="w") as archive:
+            archive.add(source_path, arcname=source_path.name, recursive=True)
+        size = destination_path.stat().st_size
+        logger.info(
+            "fs.archive: %s → %s (%d bytes)",
+            params["source"],
+            destination,
+            size,
+        )
+        return {"size_bytes": size}
+
+    def remove(self, params: dict) -> dict:
+        """Remove one temporary file below DATA_ROOT_PATH."""
+        raw_path = params["path"]
+        with self._parent_fd(raw_path) as (parent, name):
+            os.unlink(name, dir_fd=parent)
+        logger.info("fs.remove: %s", raw_path)
         return {}
 
     def list_dir(self, params: dict) -> dict:
