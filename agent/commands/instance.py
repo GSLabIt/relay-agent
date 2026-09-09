@@ -111,7 +111,11 @@ class InstanceCommands:
         # 6. Build labels (Traefik routing)
         container_name = f"saas_{slug}"
         labels = self._build_traefik_labels(
-            slug, container_name, network, domain
+            slug,
+            container_name,
+            network,
+            domain,
+            hostname=params.get("hostname"),
         )
 
         # 7. Build environment
@@ -253,9 +257,14 @@ class InstanceCommands:
             logger.info("Created Docker network: %s", network)
 
     def _build_traefik_labels(
-        self, slug: str, container_name: str, network: str, domain: str
+        self,
+        slug: str,
+        container_name: str,
+        network: str,
+        domain: str,
+        hostname: str | None = None,
     ) -> dict:
-        host = f"{slug}.{domain}"
+        host = hostname or f"{slug}.{domain}"
         router = f"saas-{slug}"
         return {
             "traefik.enable": "true",
