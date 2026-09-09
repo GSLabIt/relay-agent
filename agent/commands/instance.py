@@ -159,6 +159,12 @@ class InstanceCommands:
         _wait = 'until pg_isready -h "$HOST" -p "$PORT" -U "$USER" 2>/dev/null; do sleep 2; done'
         import shlex
 
+        # The command is wrapped in `sh -c`, so the image entrypoint cannot
+        # inject its usual --config argument (it only does that when the
+        # first argv item is `odoo`). Pass the mounted config explicitly or
+        # Odoo silently falls back to default@default and ignores the remote
+        # PostgreSQL settings.
+        odoo_cmd.insert(1, "--config=/etc/odoo/odoo.conf")
         command = [
             "sh",
             "-c",
