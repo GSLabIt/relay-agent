@@ -81,6 +81,17 @@ class InstanceCommands:
                 pull_kwargs["auth_config"] = auth_config
             self._docker.api.pull(**pull_kwargs)
 
+        # 3b. Normalize ownership of the tenant data dirs.
+        # The agent runs as uid 1000 and cannot fix files left root-owned by a
+        # previous container (a prior run, a reused slug). The Odoo container
+        # runs as uid 1000 too, so root-owned leftovers under filestore/ make
+        # every _file_write fail with PermissionError (the DB then references
+        # filestore files that were never written — "corrupted" instance), and
+        # root-owned .git dirs under addons/ make gitaggregate reject the
+        # worktrees as "dubious ownership". Best-effort: a throwaway root
+        # container chowns them back. Single-tenant platform-owned box.
+        self._normalize_data_dir_perms(slug_dir, image)
+
         # Discover addon repositories baked into the image. The control plane
         # can discover these for a local Docker daemon, but the agent runs on
         # a different host and therefore must inspect the image here. Keep
@@ -265,6 +276,49 @@ class InstanceCommands:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _normalize_data_dir_perms(
+        self, slug_dir: pathlib.Path, image: str
+    ) -> None:
+        """chown filestore/sessions/addons to uid 1000 via a root container.
+
+        Mirrors what docker_manager.spawn_instance does on the local path
+        (chown/chmod to the runtime uid). The agent runs as uid 1000 and
+        cannot fix root-owned leftovers from a prior run itself, so it uses
+        a throwaway root container. Best-effort — never fail provisioning.
+        Runs at provision/replace time, not on every boot.
+
+        ponytail: chown -R rescans the whole filestore on every replace
+        (repo sync); fine today (replace isn't hot, tree is usually
+        already-correct so it's mostly stat traffic). If a large filestore
+        makes it drag, gate on params["init_base"] or add `chown --from=0`.
+        """
+        targets = [
+            f"/data/{sub}"
+            for sub in ("filestore", "sessions", "addons")
+            if (slug_dir / sub).exists()
+        ]
+        if not targets:
+            return
+        try:
+            self._docker.containers.run(
+                image,
+                entrypoint=["chown", "-R", "1000:1000", *targets],
+                command=[],  # drop the image's default CMD (odoo -i base)
+                user="0:0",
+                volumes={str(slug_dir): {"bind": "/data", "mode": "rw"}},
+                remove=True,
+                detach=False,
+                network_mode="none",
+            )
+            logger.info("Normalized data dir ownership for %s", slug_dir.name)
+        except Exception:
+            logger.warning(
+                "Could not normalize data dir ownership for %s "
+                "(instance may fail filestore writes)",
+                slug_dir.name,
+                exc_info=True,
+            )
 
     def _discover_image_addon_paths(self, image: str) -> list[str]:
         """Discover repository roots containing addons baked into *image*."""
