@@ -4,11 +4,13 @@
 ### Feat
 
 - **`init_modules` nello spec di provision** — `provision()` accetta ora
-  `params["init_modules"]`: moduli aggiuntivi accodati al `-i base` (solo
-  quando `init_base` è true, filtrati a stringhe non vuote). Usato
-  dall'`OdooDriver` di berth-platform per forzare l'installazione di
-  `web_environment_ribbon` + `saas_env_ribbon` sulle istanze non di
-  produzione al primo boot.
+  `params["init_modules"]` (filtrati a stringhe non vuote): `base` è
+  anteposto solo quando `init_base` è true (resetta la password admin,
+  quindi solo al primo boot), gli `init_modules` sono applicati a **ogni**
+  boot quando non vuoti — `-i` su un modulo già installato è un reapply
+  sicuro. Usato dall'`OdooDriver` di berth-platform perché
+  `web_environment_ribbon` + `saas_env_ribbon` restino installati sulle
+  istanze non di produzione anche dopo un repo sync (`init_base=False`).
 
 ## v0.12.3 (2026-09-10)
 
