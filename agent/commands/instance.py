@@ -68,18 +68,28 @@ class InstanceCommands:
         # 2. Ensure Docker network exists
         self._ensure_network(network)
 
-        # 3. Pull image
+        # 3. Pull image — always. Blueprint images ride floating tags
+        # (odoo:14, ghcr.io/gslabit/odoo-ocb:14, :latest) that CI
+        # republishes; "pull only if the tag is missing" would pin every
+        # new instance to whichever build first landed on this server.
+        # containers.run() below fails cleanly on its own if nothing is
+        # cached, so a registry hiccup must not block a provision that
+        # could still run off the cached image.
+        logger.info("Pulling image %s (platform=%s)", image, platform)
+        pull_kwargs: dict = {"repository": image}
+        if platform:
+            pull_kwargs["platform"] = platform
+        auth_config = params.get("auth_config")
+        if auth_config is not None:
+            pull_kwargs["auth_config"] = auth_config
         try:
-            self._docker.images.get(image)
-        except Exception:
-            logger.info("Pulling image %s (platform=%s)", image, platform)
-            pull_kwargs: dict = {"repository": image}
-            if platform:
-                pull_kwargs["platform"] = platform
-            auth_config = params.get("auth_config")
-            if auth_config is not None:
-                pull_kwargs["auth_config"] = auth_config
             self._docker.api.pull(**pull_kwargs)
+        except Exception as exc:
+            logger.warning(
+                "Could not pull %s — using the cached image if present: %s",
+                image,
+                redact(str(exc)),
+            )
 
         # 3b. Normalize ownership of the tenant data dirs.
         # The agent runs as uid 1000 and cannot fix files left root-owned by a

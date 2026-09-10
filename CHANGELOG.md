@@ -1,4 +1,13 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Fix
+
+- **Pull immagine sempre aggiornato** — il provisioning dell'agent scarica
+  sempre l'immagine dell'istanza (i tag mobili come `odoo-ocb:14` vengono
+  ripubblicati dalla CI) invece di saltare il pull quando il tag è già in
+  cache; fallback sull'immagine in cache se il pull fallisce.
+
 ## v0.12.2 (2026-09-10)
 
 ### Fix
