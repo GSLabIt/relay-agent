@@ -193,12 +193,20 @@ class InstanceCommands:
         #    plane talking to a newer agent fails safe.
         db_name = params["db_name"]
         odoo_cmd = ["odoo", "-d", db_name]
+        # `base` only when the control plane says the DB is genuinely fresh
+        # (see the note above — -i base resets the admin password). Any other
+        # init_modules are applied on every boot: they're the env-ribbon
+        # companions, which must stay installed on non-prod instances even
+        # after a repo sync (init_base=False). -i on an already-installed
+        # module is a safe reapply.
+        init_mods = [
+            m
+            for m in (params.get("init_modules") or [])
+            if isinstance(m, str) and m
+        ]
         if params.get("init_base"):
-            init_mods = ["base"] + [
-                m
-                for m in (params.get("init_modules") or [])
-                if isinstance(m, str) and m
-            ]
+            init_mods = ["base"] + init_mods
+        if init_mods:
             odoo_cmd += ["-i", ",".join(init_mods)]
         odoo_cmd += ["--db-filter", f"^{db_name}$"]
         _wait = 'until pg_isready -h "$HOST" -p "$PORT" -U "$USER" 2>/dev/null; do sleep 2; done'
