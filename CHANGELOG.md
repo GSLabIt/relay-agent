@@ -1,4 +1,15 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Fix
+
+- **Ownership dei dati del tenant** — al provisioning l'agent normalizza la
+  proprietà delle directory `filestore/`, `sessions/` e `addons/` (uid 1000)
+  tramite un container root usa-e-getta, rispecchiando ciò che già fa il
+  percorso locale. Risolve le istanze Odoo corrotte (`PermissionError` a ogni
+  `_file_write`) e l'errore `dubious ownership` di gitaggregate quando uno slug
+  tenant viene riusato e restano directory di proprietà di root.
+
 ## v0.12.1 (2026-09-09)
 
 ### Fix
