@@ -50,7 +50,7 @@ class InstanceCommands:
           slug, db_name, image, odoo_config_content, config_container_path,
           extra_addons_paths, docker_network, tunnel_token, platform,
           cpu_cores, ram_mb, hostname, tenant_base_domain, cert_resolver,
-          init_base
+          init_base, init_modules (extra -i modules, only with init_base)
         """
         slug = _safe_slug(params["slug"])
         image = params["image"]
@@ -194,7 +194,12 @@ class InstanceCommands:
         db_name = params["db_name"]
         odoo_cmd = ["odoo", "-d", db_name]
         if params.get("init_base"):
-            odoo_cmd += ["-i", "base"]
+            init_mods = ["base"] + [
+                m
+                for m in (params.get("init_modules") or [])
+                if isinstance(m, str) and m
+            ]
+            odoo_cmd += ["-i", ",".join(init_mods)]
         odoo_cmd += ["--db-filter", f"^{db_name}$"]
         _wait = 'until pg_isready -h "$HOST" -p "$PORT" -U "$USER" 2>/dev/null; do sleep 2; done'
         import shlex
