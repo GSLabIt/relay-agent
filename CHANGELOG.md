@@ -1,4 +1,15 @@
 <!-- markdownlint-disable MD024 MD041 -->
+## Unreleased
+
+### Feat
+
+- **`init_modules` nello spec di provision** — `provision()` accetta ora
+  `params["init_modules"]`: moduli aggiuntivi accodati al `-i base` (solo
+  quando `init_base` è true, filtrati a stringhe non vuote). Usato
+  dall'`OdooDriver` di berth-platform per forzare l'installazione di
+  `web_environment_ribbon` + `saas_env_ribbon` sulle istanze non di
+  produzione al primo boot.
+
 ## v0.12.3 (2026-09-10)
 
 ### Fix
