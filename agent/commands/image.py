@@ -62,6 +62,25 @@ class ImageCommands:
             )
             return {"id": None, "error": message}
 
+    def prune_unused(self, params: dict) -> dict:
+        """Remove only images unused by every container for a minimum age.
+
+        The lower bound makes this safe as a scheduled housekeeping command:
+        an image pulled for a rollback or a just-failed redeploy remains
+        available for at least a week. Docker itself guarantees that images
+        referenced by any running or stopped container are never removed.
+        """
+        older_than_hours = int(params.get("older_than_hours", 168))
+        if older_than_hours < 168 or older_than_hours > 24 * 365:
+            raise ValueError("older_than_hours must be between 168 and 8760")
+        result = self._docker.images.prune(
+            filters={"dangling": False, "until": f"{older_than_hours}h"}
+        )
+        return {
+            "space_reclaimed_bytes": int(result.get("SpaceReclaimed", 0)),
+            "images_deleted": len(result.get("ImagesDeleted") or []),
+        }
+
     def extract_file(self, params: dict) -> dict:
         """Run a disposable container from *image* and return the contents of *path*.
 

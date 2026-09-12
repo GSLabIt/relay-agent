@@ -17,7 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from agent.commands.container import ContainerCommands
 from agent.commands.fs import FsCommands
 from agent.commands.instance import _safe_slug
+from agent.commands.image import ImageCommands
 from agent.commands.postgres import PostgresCommands
+from agent.commands.system import SystemCommands
 from agent.gateway import (
     _MAX_ACTIVE_STREAMS,
     _SESSION_MAX_BUFFERED_BYTES,
@@ -41,6 +43,52 @@ def test_slug_validation() -> None:
         except ValueError:
             continue
         raise AssertionError(f"slug {bad!r} should have been rejected")
+
+
+def test_host_metrics_reports_only_aggregate_values(monkeypatch) -> None:
+    class FakeDocker:
+        pass
+
+    class FakeStat:
+        f_blocks = 100
+        f_frsize = 4096
+        f_bavail = 25
+
+    monkeypatch.setattr(os, "statvfs", lambda _: FakeStat())
+    monkeypatch.setattr(os, "getloadavg", lambda: (1.5, 0.0, 0.0))
+    metrics = SystemCommands(FakeDocker()).metrics({})
+    assert metrics["load1"] == 1.5
+    assert metrics["disk_total_bytes"] == 409600
+    assert metrics["disk_available_bytes"] == 102400
+    assert metrics["mem_total_bytes"] > 0
+    assert metrics["mem_available_bytes"] > 0
+
+
+def test_image_prune_enforces_seven_day_floor() -> None:
+    class FakeImages:
+        def __init__(self) -> None:
+            self.filters = None
+
+        def prune(self, filters: dict) -> dict:
+            self.filters = filters
+            return {"SpaceReclaimed": 1234, "ImagesDeleted": [{"Deleted": "x"}]}
+
+    class FakeDocker:
+        images = FakeImages()
+
+    docker = FakeDocker()
+    command = ImageCommands(docker)
+    assert command.prune_unused({}) == {
+        "space_reclaimed_bytes": 1234,
+        "images_deleted": 1,
+    }
+    assert docker.images.filters == {"dangling": False, "until": "168h"}
+    try:
+        command.prune_unused({"older_than_hours": 24})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("prune must not accept an age below seven days")
 
 
 def test_volume_relative_escape_rejected() -> None:
