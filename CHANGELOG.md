@@ -1,4 +1,14 @@
 <!-- markdownlint-disable MD024 MD041 -->
+
+## Unreleased
+
+### Feat
+
+- **Metriche host e cleanup immagini prudente** — `docker.system.metrics`
+  espone solo load, RAM e filesystem aggregati; `docker.image.prune_unused`
+  rifiuta età inferiori a sette giorni e lascia a Docker la protezione delle
+  immagini riferite da container.
+
 ## v0.13.0 (2026-09-10)
 
 ### Feat

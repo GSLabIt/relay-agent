@@ -61,6 +61,11 @@ damage (not a deliberate attacker who already holds the token):
 | `fs.read_bytes` / `fs.list_dir` | per-request size caps; recursive listings use stateless cursor pagination |
 | Per-connection limits | max concurrent commands, max active streams, per-stream and aggregate buffered-byte ceilings; streams and their threads/subprocesses are torn down when the WebSocket closes |
 
+`docker.system.metrics` exposes only aggregate host load, RAM and root
+filesystem capacity. `docker.image.prune_unused` accepts no age below 168
+hours and relies on Docker's reference protection, so it never deletes an
+image used by a running or stopped container.
+
 - **Token-based auth**: each server gets a unique revocable token
 - **Open source**: this code is auditable — no hidden behaviour
 - **No inbound ports**: only outbound WebSocket from your server to the platform
