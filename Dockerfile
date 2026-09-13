@@ -1,5 +1,7 @@
 FROM python:3.12-slim
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 WORKDIR /app
 
 RUN pip install --no-cache-dir "docker>=7.1.0" "websockets>=12.0"

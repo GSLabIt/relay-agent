@@ -1,5 +1,19 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Fix
+
+- **`dockerfile-lint` CI job (DL4006)** — `SHELL ["/bin/bash", "-o",
+  "pipefail", "-c"]` aggiunto subito dopo `FROM`: il `RUN groupadd ... &&
+  useradd ... -G "$(getent group 999 | cut -d: -f1)"` usa una pipe dentro una
+  command substitution, e con `/bin/sh` (default Debian, senza `pipefail`) un
+  fallimento di `getent`/`cut` sarebbe passato silenziosamente. Verificato
+  con l'esatta invocazione della CI (`ghcr.io/hadolint/hadolint:v2.12.0-debian`,
+  `HADOLINT_IGNORE=DL3008,DL3013`, `HADOLINT_FAILURE_THRESHOLD=info`) — exit 0
+  dopo il fix, contro l'exit 1 (DL4006) di prima. Build Docker locale
+  invariata (bash è già presente in `python:3.12-slim`).
+
 ## v0.15.0 (2026-09-12)
 
 ### Feat
