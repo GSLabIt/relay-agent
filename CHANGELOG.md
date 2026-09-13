@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
-## Unreleased
+## v0.15.2 (2026-09-13)
 
 ### Fix
 
