@@ -49,8 +49,9 @@ class InstanceCommands:
         Expected params (built by OdooDriver._provision_via_agent):
           slug, db_name, image, odoo_config_content, config_container_path,
           extra_addons_paths, docker_network, tunnel_token, platform,
-          cpu_cores, ram_mb, hostname, tenant_base_domain, cert_resolver,
-          init_base, init_modules (extra -i modules, only with init_base)
+          cpu_cores, ram_mb, hostname, extra_hostnames, tenant_base_domain,
+          cert_resolver, init_base, init_modules (extra -i modules, only
+          with init_base)
         """
         slug = _safe_slug(params["slug"])
         image = params["image"]
@@ -155,6 +156,7 @@ class InstanceCommands:
             network,
             domain,
             hostname=params.get("hostname"),
+            extra_hostnames=params.get("extra_hostnames"),
             cert_resolver=params.get("cert_resolver") or "letsencrypt",
         )
 
@@ -439,13 +441,16 @@ class InstanceCommands:
         network: str,
         domain: str,
         hostname: str | None = None,
+        extra_hostnames: list[str] | None = None,
         cert_resolver: str = "letsencrypt",
     ) -> dict:
         host = hostname or f"{slug}.{domain}"
+        all_hosts = list(dict.fromkeys([host, *(extra_hostnames or [])]))
+        rule = " || ".join(f"Host(`{h}`)" for h in all_hosts)
         router = f"saas-{slug}"
         return {
             "traefik.enable": "true",
-            f"traefik.http.routers.{router}.rule": f"Host(`{host}`)",
+            f"traefik.http.routers.{router}.rule": rule,
             f"traefik.http.routers.{router}.entrypoints": "websecure",
             f"traefik.http.routers.{router}.tls": "true",
             f"traefik.http.routers.{router}.tls.certresolver": cert_resolver,

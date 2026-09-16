@@ -1,5 +1,13 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Feat
+
+- **Alias DNS per istanza** — il provisioning agent-side accetta gli hostname
+  aggiuntivi e costruisce una regola Traefik che instrada sia il dominio
+  principale sia gli alias verso lo stesso container.
+
 ## v0.15.2 (2026-09-13)
 
 ### Fix
