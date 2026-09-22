@@ -1,5 +1,17 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Feat
+
+- **Redirect alias hostnames** — `saas.instance.provision` accetta
+  `redirect_hostnames`: per ognuno viene costruito un router Traefik +
+  middleware `redirectregex` dedicato che risponde con un 301 permanente
+  verso l'hostname primario dell'istanza, invece di servire il traffico.
+  Priorità del router principale fissata esplicitamente (`1`, più bassa dei
+  router redirect a `5`) così l'ordine non dipende più dal tie-break
+  implicito di Traefik sulla lunghezza della regola.
+
 ## v0.16.0 (2026-09-16)
 
 ### Feat

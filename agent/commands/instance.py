@@ -49,9 +49,9 @@ class InstanceCommands:
         Expected params (built by OdooDriver._provision_via_agent):
           slug, db_name, image, odoo_config_content, config_container_path,
           extra_addons_paths, docker_network, tunnel_token, platform,
-          cpu_cores, ram_mb, hostname, extra_hostnames, tenant_base_domain,
-          cert_resolver, init_base, init_modules (extra -i modules, only
-          with init_base)
+          cpu_cores, ram_mb, hostname, extra_hostnames, redirect_hostnames,
+          tenant_base_domain, cert_resolver, init_base, init_modules (extra
+          -i modules, only with init_base)
         """
         slug = _safe_slug(params["slug"])
         image = params["image"]
@@ -158,6 +158,7 @@ class InstanceCommands:
             hostname=params.get("hostname"),
             extra_hostnames=params.get("extra_hostnames"),
             cert_resolver=params.get("cert_resolver") or "letsencrypt",
+            redirect_hostnames=params.get("redirect_hostnames"),
         )
 
         # 7. Build environment
@@ -443,21 +444,63 @@ class InstanceCommands:
         hostname: str | None = None,
         extra_hostnames: list[str] | None = None,
         cert_resolver: str = "letsencrypt",
+        redirect_hostnames: list[str] | None = None,
     ) -> dict:
         host = hostname or f"{slug}.{domain}"
         all_hosts = list(dict.fromkeys([host, *(extra_hostnames or [])]))
         rule = " || ".join(f"Host(`{h}`)" for h in all_hosts)
         router = f"saas-{slug}"
-        return {
+        labels = {
             "traefik.enable": "true",
             f"traefik.http.routers.{router}.rule": rule,
             f"traefik.http.routers.{router}.entrypoints": "websecure",
             f"traefik.http.routers.{router}.tls": "true",
             f"traefik.http.routers.{router}.tls.certresolver": cert_resolver,
+            # Explicit, not left to Traefik's implicit rule-length
+            # tie-breaking — pinned low so the redirect routers below
+            # (explicit priority) always win deterministically over this
+            # catch-all if their rules were ever to overlap, instead of
+            # depending on which rule happens to be longer. Mirrors
+            # berth-platform's docker_manager._instance_traefik_labels,
+            # same reasoning.
+            f"traefik.http.routers.{router}.priority": "1",
             f"traefik.http.services.{router}.loadbalancer.server.port": "8069",
             "saas.instance": slug,
             "saas.managed": "true",
         }
+        # Alias hostnames marked redirect_to_primary on the control plane
+        # (InstanceAlias.redirect_to_primary) — 301 to the primary host
+        # instead of being served. One router + one redirectregex
+        # middleware per redirect hostname, matching
+        # berth-platform's docker_manager._alias_redirect_labels (the
+        # local-Docker equivalent of this method). Agent-provisioned
+        # instances are always TLS (letsencrypt certresolver above), so
+        # the replacement scheme is always https — no use_tls branch
+        # needed here unlike the local path.
+        for i, redirect_host in enumerate(redirect_hostnames or []):
+            r_router = f"{router}-redirect-{i}"
+            r_mw = f"{r_router}-mw"
+            labels[f"traefik.http.routers.{r_router}.rule"] = (
+                f"Host(`{redirect_host}`)"
+            )
+            labels[f"traefik.http.routers.{r_router}.entrypoints"] = "websecure"
+            labels[f"traefik.http.routers.{r_router}.tls"] = "true"
+            labels[f"traefik.http.routers.{r_router}.tls.certresolver"] = (
+                cert_resolver
+            )
+            labels[f"traefik.http.routers.{r_router}.priority"] = "5"
+            labels[f"traefik.http.routers.{r_router}.service"] = router
+            labels[f"traefik.http.routers.{r_router}.middlewares"] = r_mw
+            labels[f"traefik.http.middlewares.{r_mw}.redirectregex.regex"] = (
+                "^https?://[^/]+/(.*)"
+            )
+            labels[
+                f"traefik.http.middlewares.{r_mw}.redirectregex.replacement"
+            ] = f"https://{host}/${{1}}"
+            labels[
+                f"traefik.http.middlewares.{r_mw}.redirectregex.permanent"
+            ] = "true"
+        return labels
 
     def _spawn_cloudflared(
         self, slug: str, tunnel_token: str, network: str
