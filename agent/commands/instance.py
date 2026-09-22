@@ -50,8 +50,8 @@ class InstanceCommands:
           slug, db_name, image, odoo_config_content, config_container_path,
           extra_addons_paths, docker_network, tunnel_token, platform,
           cpu_cores, ram_mb, hostname, extra_hostnames, redirect_hostnames,
-          tenant_base_domain, cert_resolver, init_base, init_modules (extra
-          -i modules, only with init_base)
+          tenant_base_domain, cert_resolver, init_base, load_demo_data,
+          init_modules (extra -i modules, only with init_base)
         """
         slug = _safe_slug(params["slug"])
         image = params["image"]
@@ -212,6 +212,11 @@ class InstanceCommands:
         if init_mods:
             odoo_cmd += ["-i", ",".join(init_mods)]
         odoo_cmd += ["--db-filter", f"^{db_name}$"]
+        # Fail closed: Odoo demo data must be explicitly requested by the
+        # control plane. This mirrors docker_manager.spawn_instance and
+        # prevents a missing parameter from silently loading demo records.
+        if params.get("load_demo_data") is not True:
+            odoo_cmd += ["--without-demo=all"]
         _wait = 'until pg_isready -h "$HOST" -p "$PORT" -U "$USER" 2>/dev/null; do sleep 2; done'
         import shlex
 
