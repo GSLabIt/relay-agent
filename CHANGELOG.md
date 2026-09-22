@@ -1,5 +1,14 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Fix
+
+- **Socket Docker con GID dinamico** — all'avvio l'immagine rileva il gruppo
+  numerico del socket Docker montato, lo assegna all'utente `agent` e poi
+  avvia il processo senza privilegi root. Non serve più passare un
+  `--group-add` specifico dell'host.
+
 ## v0.17.0 (2026-09-22)
 
 ### Feat

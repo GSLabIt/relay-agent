@@ -89,6 +89,10 @@ docker run -d \
   ghcr.io/gslabit/relay-agent:latest
 ```
 
+The image detects the numeric group of the mounted Docker socket at startup
+and grants it to its unprivileged `agent` user. No host-specific
+`--group-add` option is required.
+
 ### Docker Compose
 
 Copy `docker-compose.example.yml`, fill in `GATEWAY_URL` and `TOKEN`, then:
