@@ -1,5 +1,16 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Fix
+
+- **Tunnel TCP verso container su un'altra rete** — l'agent gira sulla rete
+  Docker di default `bridge` (nessun DNS tra container, isolata via
+  iptables), mentre `berth_postgres` sta su `berth_platform_proxy`: ogni
+  `tcp.tunnel.open` falliva con `Name or service not known`, rompendo il DB
+  browser (pgweb) e il DB Tunnel. Se il target non risolve ma è un container
+  locale, l'agent ora si collega da solo alla sua rete e riprova.
+
 ## v0.17.2 (2026-09-22)
 
 ### Fix
