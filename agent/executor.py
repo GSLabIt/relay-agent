@@ -32,7 +32,7 @@ class Executor:
         self._system = SystemCommands(self._docker)
         self._fs = FsCommands(data_root_path)
         self._image = ImageCommands(self._docker)
-        self._tcp_tunnel = TcpTunnelCommands()
+        self._tcp_tunnel = TcpTunnelCommands(self._docker)
         self._host_shell = HostShellCommands()
 
     def docker_version(self) -> str:

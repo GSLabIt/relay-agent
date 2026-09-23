@@ -646,6 +646,58 @@ def test_postgres_mutations_are_serialized() -> None:
         command._mutation_lock.release()
 
 
+def test_tcp_tunnel_attaches_agent_to_target_network() -> None:
+    """An unresolvable container-name target makes the agent join that
+    container's network (agent on default bridge, berth_postgres on
+    berth_platform_proxy); a non-container name is left untouched."""
+    import socket as _socket
+    import types
+
+    import docker.errors
+
+    from agent.commands.tcp_tunnel import TcpTunnelCommands
+
+    connected: list[tuple[str, str]] = []
+
+    def _ctr(name: str, networks: list[str]):
+        return types.SimpleNamespace(
+            name=name,
+            attrs={"NetworkSettings": {"Networks": {n: {} for n in networks}}},
+        )
+
+    containers = {
+        "berth_postgres": _ctr("berth_postgres", ["berth_platform_proxy"]),
+        _socket.gethostname(): _ctr("relay-agent", ["bridge"]),
+    }
+
+    def _get(name: str):
+        if name not in containers:
+            raise docker.errors.NotFound(name)
+        return containers[name]
+
+    fake = types.SimpleNamespace(
+        containers=types.SimpleNamespace(get=_get),
+        networks=types.SimpleNamespace(
+            get=lambda net: types.SimpleNamespace(
+                connect=lambda c: connected.append((net, c.name))
+            )
+        ),
+    )
+    cmds = TcpTunnelCommands(fake)
+    cmds._attach_to_container_network("berth_postgres")
+    assert connected == [("berth_platform_proxy", "relay-agent")], connected
+
+    connected.clear()
+    cmds._attach_to_container_network("not-a-container.example")
+    assert connected == []
+
+    containers[_socket.gethostname()] = _ctr(
+        "relay-agent", ["bridge", "berth_platform_proxy"]
+    )
+    cmds._attach_to_container_network("berth_postgres")
+    assert connected == [], "already attached: must not reconnect"
+
+
 def _run() -> None:
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
