@@ -64,7 +64,9 @@ damage (not a deliberate attacker who already holds the token):
 `docker.system.metrics` exposes only aggregate host load, RAM and root
 filesystem capacity. `docker.image.prune_unused` accepts no age below 168
 hours and relies on Docker's reference protection, so it never deletes an
-image used by a running or stopped container.
+image used by a running or stopped container. `docker.image.prune_dangling`
+has no age floor at all — it only removes untagged images, which the same
+reference protection already keeps safe regardless of age.
 
 - **Token-based auth**: each server gets a unique revocable token
 - **Open source**: this code is auditable — no hidden behaviour
@@ -156,6 +158,7 @@ The agent speaks a simple JSON protocol over WebSocket:
 | `docker.container.list` | List containers |
 | `docker.container.exec_run` | Run a command inside a running container (`environment` dict supported) |
 | `docker.image.extract_file` | Read a file from a Docker image via a disposable container |
+| `docker.image.prune_dangling` | Remove untagged images, no age floor (emergency disk-pressure top-up) |
 | `fs.write_text` | Write a UTF-8 text file at a path inside DATA_ROOT_PATH |
 | `fs.write_bytes` | Write/append binary data (base64-encoded) — use for chunked uploads |
 | `fs.mkdir` | Create a directory inside DATA_ROOT_PATH |
