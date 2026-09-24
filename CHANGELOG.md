@@ -1,5 +1,16 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Feat
+
+- **`docker.image.prune_dangling`** — rimuove solo immagini untagged
+  (dangling), senza il floor di 7 giorni di `prune_unused`: Docker rifiuta
+  comunque di toccare un'immagine referenziata da un container, tag o non
+  tag che sia, quindi è sicuro chiamarlo anche fuori dal ciclo di pulizia
+  schedulato. Pensato come top-up di emergenza quando un server è già sotto
+  pressione di spazio disco e non può aspettare la finestra normale.
+
 ## v0.17.3 (2026-09-23)
 
 ### Fix

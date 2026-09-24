@@ -81,6 +81,21 @@ class ImageCommands:
             "images_deleted": len(result.get("ImagesDeleted") or []),
         }
 
+    def prune_dangling(self, params: dict) -> dict:
+        """Remove untagged (dangling) images, no minimum age.
+
+        Unlike prune_unused, this has no rollback grace period — but it
+        doesn't need one: a dangling image has no tag pointing at it, and
+        Docker itself still refuses to remove one referenced by any
+        running or stopped container. Meant as an emergency top-up when
+        disk pressure can't wait for prune_unused's 7-day floor.
+        """
+        result = self._docker.images.prune(filters={"dangling": True})
+        return {
+            "space_reclaimed_bytes": int(result.get("SpaceReclaimed", 0)),
+            "images_deleted": len(result.get("ImagesDeleted") or []),
+        }
+
     def extract_file(self, params: dict) -> dict:
         """Run a disposable container from *image* and return the contents of *path*.
 
