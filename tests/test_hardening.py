@@ -143,6 +143,35 @@ def test_fs_rejects_escape_and_symlink_traversal() -> None:
                 raise AssertionError(f"{bad!r} traversal not rejected")
 
 
+def test_fs_remove_tree() -> None:
+    with (
+        tempfile.TemporaryDirectory() as root,
+        tempfile.TemporaryDirectory() as out,
+    ):
+        fs = FsCommands(root)
+        os.makedirs(os.path.join(root, "t", "a", "b"))
+        open(os.path.join(root, "t", "a", "b", "f"), "w").close()
+        fs.remove_tree({"path": "t"})
+        assert not os.path.exists(os.path.join(root, "t"))
+        fs.remove_tree({"path": "t"})  # missing is fine
+        # a symlink target is refused and never followed; data stays intact
+        open(os.path.join(out, "keep"), "w").close()
+        os.symlink(out, os.path.join(root, "link"))
+        try:
+            fs.remove_tree({"path": "link"})
+            raise AssertionError("symlink target must be refused")
+        except OSError:
+            pass
+        assert os.path.exists(os.path.join(out, "keep"))
+        # escape and the root itself are rejected
+        for bad in ("../x", "/etc", "."):
+            try:
+                fs.remove_tree({"path": bad})
+                raise AssertionError(f"{bad!r} must be rejected")
+            except (ValueError, OSError):
+                pass
+
+
 def test_fs_read_bytes_clamps() -> None:
     with tempfile.TemporaryDirectory() as root:
         fs = FsCommands(root)

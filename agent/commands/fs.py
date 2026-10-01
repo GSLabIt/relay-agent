@@ -6,6 +6,7 @@ import base64
 import errno
 import logging
 import os
+import shutil
 import stat
 import tarfile
 from contextlib import contextmanager
@@ -212,6 +213,24 @@ class FsCommands:
         with self._parent_fd(raw_path) as (parent, name):
             os.unlink(name, dir_fd=parent)
         logger.info("fs.remove: %s", raw_path)
+        return {}
+
+    def remove_tree(self, params: dict) -> dict:
+        """Recursively remove a directory below DATA_ROOT_PATH.
+
+        The parent is reached from the root fd with O_NOFOLLOW (symlinks in
+        the chain are rejected) and rmtree runs relative to that fd, so it
+        never follows a symlink out of the data root. A symlink as the target
+        itself is refused by rmtree. Missing target is not an error. Files the
+        agent user can't delete (e.g. root-owned) raise PermissionError.
+        """
+        raw_path = params["path"]
+        with self._parent_fd(raw_path) as (parent, name):
+            try:
+                shutil.rmtree(name, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+        logger.info("fs.remove_tree: %s", raw_path)
         return {}
 
     def list_dir(self, params: dict) -> dict:
