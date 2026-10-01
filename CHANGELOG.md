@@ -1,5 +1,16 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Feat
+
+- **`fs.remove_tree`** — rimuove ricorsivamente una directory sotto
+  `DATA_ROOT_PATH` (prima `fs.remove` cancellava solo un singolo file).
+  Raggiunge il genitore dal fd della radice con `O_NOFOLLOW` e usa
+  `shutil.rmtree(dir_fd=...)`: non segue symlink, rifiuta la radice stessa,
+  e una directory già assente non è un errore. Serve al control plane per
+  eliminare la directory tenant di un'istanza su server agent.
+
 ## v0.18.0 (2026-09-24)
 
 ### Feat
