@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
+import secrets
 import shutil
 import tarfile
 import tempfile
@@ -28,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _SAFE_RE = re.compile(r"^[A-Za-z0-9_]+$")
+# Names of the per-operation files the control plane may ask to restore/clean.
+_RESTORE_FILE_RE = re.compile(r"^restore_[a-f0-9]{8}\.pgdump$")
+_OP_PATH_RE = re.compile(
+    r"^_tenantdb/([a-z0-9-]+)/([A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)?)$"
+)
 _SCRATCH = "/scratch"
 _READY_TIMEOUT = 90
 # initdb and gosu need these; everything else is dropped.
@@ -268,13 +274,16 @@ class TenantDbCommands:
 
     def dump(self, params: dict) -> dict:
         """pg_dump -Fc into the container's scratch volume, then out to
-        ``<data_root>/_tenantdb/<slug>/dump.pgdump``. Returns the path
-        relative to the data root, for ``fs.read_bytes``."""
+        ``<data_root>/_tenantdb/<slug>/dump_<id>.pgdump``. Returns the path
+        relative to the data root, for ``fs.read_bytes``; pass it to
+        ``cleanup`` when done."""
         slug = _slug(params)
         pg_user = _ident(params["pg_user"], "user")
         db_name = _ident(params["db_name"], "database")
         container = self._container(slug)
-        staged = f"{_SCRATCH}/dump.pgdump"
+        # One name per call: dumps of the same tenant may overlap.
+        name = f"dump_{secrets.token_hex(4)}.pgdump"
+        staged = f"{_SCRATCH}/{name}"
         result = container.exec_run(
             ["pg_dump", "-U", pg_user, "-Fc", "-f", staged, db_name]
         )
@@ -296,11 +305,11 @@ class TenantDbCommands:
                     src = tar.extractfile(member) if member else None
                     if src is None:
                         raise RuntimeError("pg_dump produced no file")
-                    with (host / "dump.pgdump").open("wb") as out:
+                    with (host / name).open("wb") as out:
                         shutil.copyfileobj(src, out)
         finally:
             container.exec_run(["rm", "-f", staged])
-        return {"path": f"_tenantdb/{slug}/dump.pgdump"}
+        return {"path": f"_tenantdb/{slug}/{name}"}
 
     def restore(self, params: dict) -> dict:
         """Load ``<data_root>/_tenantdb/<slug>/restore.pgdump`` (uploaded with
@@ -309,13 +318,20 @@ class TenantDbCommands:
         slug = _slug(params)
         owner = _ident(params["owner"], "owner")
         db_name = _ident(params["db_name"], "database")
-        source = self._host_dir(slug) / "restore.pgdump"
+        file_name = params.get("file", "restore.pgdump")
+        if file_name != "restore.pgdump" and not _RESTORE_FILE_RE.match(
+            str(file_name)
+        ):
+            raise ValueError(f"Unsafe restore file: {file_name!r}")
+        source = self._host_dir(slug) / file_name
         if not source.is_file():
-            raise FileNotFoundError("restore.pgdump has not been uploaded")
+            raise FileNotFoundError(f"{file_name} has not been uploaded")
         container = self._container(slug)
+        # Staged under the same unique name: restores may overlap.
+        listing = f"{file_name}.list"
         with tempfile.TemporaryFile() as archive:
             with tarfile.open(fileobj=archive, mode="w") as tar:
-                tar.add(source, arcname="restore.pgdump")
+                tar.add(source, arcname=file_name)
             archive.seek(0)
             container.put_archive(_SCRATCH, archive)
         try:
@@ -324,15 +340,17 @@ class TenantDbCommands:
                     "sh",
                     "-ec",
                     'cd "$SCRATCH"; '
-                    "pg_restore -l restore.pgdump | grep -v ' EXTENSION ' "
-                    "> restore.list; "
+                    "pg_restore -l \"$FILE\" | grep -v ' EXTENSION ' "
+                    '> "$LIST"; '
                     f'pg_restore -h 127.0.0.1 -U {owner} -d "$DB" --no-owner '
-                    "--no-acl -L restore.list restore.pgdump",
+                    '--no-acl -L "$LIST" "$FILE"',
                 ],
                 environment={
                     "PGPASSWORD": params["owner_password"],
                     "DB": db_name,
                     "SCRATCH": _SCRATCH,
+                    "FILE": file_name,
+                    "LIST": listing,
                 },
             )
         finally:
@@ -340,8 +358,8 @@ class TenantDbCommands:
                 [
                     "rm",
                     "-f",
-                    f"{_SCRATCH}/restore.pgdump",
-                    f"{_SCRATCH}/restore.list",
+                    f"{_SCRATCH}/{file_name}",
+                    f"{_SCRATCH}/{listing}",
                 ]
             )
             with suppress(OSError):
@@ -387,5 +405,21 @@ class TenantDbCommands:
         return {"path": f"_tenantdb/{slug}/export/{name}"}
 
     def cleanup(self, params: dict) -> dict:
-        shutil.rmtree(self._host_dir(_slug(params)), ignore_errors=True)
+        """Remove what one operation staged (``path``, as returned by
+        ``dump``/``export``, or the uploaded restore file), leaving other
+        operations' files alone; without ``path``, everything of the slug."""
+        slug = _slug(params)
+        rel = params.get("path")
+        if rel is None:
+            shutil.rmtree(self._host_dir(slug), ignore_errors=True)
+            return {}
+        match = _OP_PATH_RE.match(str(rel))
+        if not match or match.group(1) != slug or ".." in str(rel):
+            raise ValueError(f"Unsafe cleanup path: {rel!r}")
+        target = self._data_root / str(rel)
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            with suppress(OSError):
+                target.unlink()
         return {}

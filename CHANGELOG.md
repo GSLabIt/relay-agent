@@ -8,6 +8,7 @@
 
 ### Fix
 
+- `berth.tenantdb.dump`/`restore`/`export`: un file per operazione (`dump_<id>.pgdump`, `restore_<id>.pgdump`, `export/<nome>`) e `cleanup` con `path` che rimuove solo quello: operazioni sullo stesso tenant possono sovrapporsi. Senza `path` il cleanup svuota tutto lo slug come prima.
 - `berth.tenantdb.ensure` con `recreate`: scarica l'immagine prima di toccare il container in esecuzione e lo rimette a posto se il nuovo non parte; rifiuta comando/immagine/memoria inattesi. `export` rifiuta i segmenti `.`/`..`. `extra_networks` accetta solo le reti `berth_t_*` del tenant.
 - `berth.tenantdb.remove` scollega i container ancora collegati prima di rimuovere la rete del tenant (Docker rifiuta una rete con endpoint attivi).
 

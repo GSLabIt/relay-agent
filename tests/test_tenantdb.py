@@ -116,3 +116,48 @@ def test_failed_recreate_puts_the_previous_container_back(monkeypatch):
     assert previous.rename.call_args_list[0].args[0] == "berth_pg_acme_old"
     assert previous.rename.call_args_list[-1].args[0] == "berth_pg_acme"
     previous.start.assert_called_once()
+
+
+def test_cleanup_removes_only_the_given_operation(tmp_path):
+    commands = TenantDbCommands(object(), str(tmp_path))
+    base = tmp_path / "_tenantdb" / "acme"
+    base.mkdir(parents=True)
+    (base / "dump_aaaa1111.pgdump").write_bytes(b"1")
+    (base / "dump_bbbb2222.pgdump").write_bytes(b"2")
+    commands.cleanup(
+        {"slug": "acme", "path": "_tenantdb/acme/dump_aaaa1111.pgdump"}
+    )
+    assert not (base / "dump_aaaa1111.pgdump").exists()
+    assert (base / "dump_bbbb2222.pgdump").exists()
+    commands.cleanup({"slug": "acme"})
+    assert not base.exists()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "_tenantdb/other/x.pgdump",
+        "_tenantdb/acme/../other/x",
+        "../etc/passwd",
+        "/etc/passwd",
+        "_tenantdb/acme/a/b/c",
+    ],
+)
+def test_cleanup_refuses_paths_outside_the_slug(path, tmp_path):
+    with pytest.raises(ValueError):
+        TenantDbCommands(object(), str(tmp_path)).cleanup(
+            {"slug": "acme", "path": path}
+        )
+
+
+def test_restore_refuses_an_unsafe_file_name(tmp_path):
+    with pytest.raises(ValueError):
+        TenantDbCommands(object(), str(tmp_path)).restore(
+            {
+                "slug": "acme",
+                "owner": "o",
+                "db_name": "d",
+                "owner_password": "p",
+                "file": "../../etc/passwd",
+            }
+        )
