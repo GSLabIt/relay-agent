@@ -107,6 +107,7 @@ class ContainerCommands:
                     "Pre-pull failed for %s: %s", image, redact(str(exc))
                 )
 
+        extra_networks = params.pop("extra_networks", None) or []
         run_kwargs: dict = {
             "detach": True,
             "volumes": volumes,
@@ -115,7 +116,20 @@ class ContainerCommands:
         if platform:
             run_kwargs["platform"] = platform
 
-        container = self._docker.containers.run(**run_kwargs)
+        if extra_networks:
+            # Attach before the first start so the app can resolve its own
+            # database at boot instead of crash-looping until the network lands.
+            run_kwargs.pop("detach")
+            container = self._docker.containers.create(**run_kwargs)
+            try:
+                for net in extra_networks:
+                    self._docker.networks.get(net).connect(container)
+                container.start()
+            except Exception:
+                container.remove(force=True)
+                raise
+        else:
+            container = self._docker.containers.run(**run_kwargs)
         logger.info(
             "Container started: %s (%s)", container.name, container.short_id
         )

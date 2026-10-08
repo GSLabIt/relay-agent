@@ -16,6 +16,7 @@ from agent.commands.instance import InstanceCommands
 from agent.commands.postgres import PostgresCommands
 from agent.commands.system import SystemCommands
 from agent.commands.tcp_tunnel import TcpTunnelCommands
+from agent.commands.tenantdb import TenantDbCommands
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class Executor:
         self._container = ContainerCommands(self._docker, data_root_path)
         self._instance = InstanceCommands(self._docker, data_root_path)
         self._postgres = PostgresCommands(self._docker, data_root_path)
+        self._tenantdb = TenantDbCommands(self._docker, data_root_path)
         self._system = SystemCommands(self._docker)
         self._fs = FsCommands(data_root_path)
         self._image = ImageCommands(self._docker)
@@ -99,7 +101,7 @@ class Executor:
                     raise ValueError(f"Unknown system command: {action!r}")
                 return handler(params)
 
-        if ns == "saas" and resource == "instance":
+        if ns in ("saas", "berth") and resource == "instance":
             handler = getattr(self._instance, action, None)
             if handler is None:
                 raise ValueError(f"Unknown instance command: {action!r}")
@@ -109,6 +111,12 @@ class Executor:
             handler = getattr(self._postgres, action, None)
             if handler is None:
                 raise ValueError(f"Unknown postgres command: {action!r}")
+            return handler(params)
+
+        if ns in ("saas", "berth") and resource == "tenantdb":
+            handler = getattr(self._tenantdb, action, None)
+            if handler is None or action.startswith("_"):
+                raise ValueError(f"Unknown tenantdb command: {action!r}")
             return handler(params)
 
         raise ValueError(f"Unknown method: {method!r}")

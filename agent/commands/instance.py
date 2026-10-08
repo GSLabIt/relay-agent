@@ -51,7 +51,8 @@ class InstanceCommands:
           extra_addons_paths, docker_network, tunnel_token, platform,
           cpu_cores, ram_mb, hostname, extra_hostnames, redirect_hostnames,
           tenant_base_domain, cert_resolver, init_base, load_demo_data,
-          init_modules (extra -i modules, only with init_base)
+          init_modules (extra -i modules, only with init_base),
+          extra_networks (private networks joined before the first start)
         """
         slug = _safe_slug(params["slug"])
         image = params["image"]
@@ -263,7 +264,25 @@ class InstanceCommands:
             except Exception:  # noqa: BLE001 — NotFound or already gone
                 pass
 
-        container = self._docker.containers.run(**run_kwargs)
+        extra_networks = [
+            n
+            for n in (params.get("extra_networks") or [])
+            if isinstance(n, str)
+        ]
+        if extra_networks:
+            # Join the tenant's private database network before the first
+            # start, so Odoo can resolve its Postgres at boot.
+            run_kwargs.pop("detach")
+            container = self._docker.containers.create(**run_kwargs)
+            try:
+                for net in extra_networks:
+                    self._docker.networks.get(net).connect(container)
+                container.start()
+            except Exception:
+                container.remove(force=True)
+                raise
+        else:
+            container = self._docker.containers.run(**run_kwargs)
         logger.info(
             "Instance container started: %s (%s)",
             container.name,
