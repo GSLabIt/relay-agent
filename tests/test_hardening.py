@@ -6,6 +6,7 @@ Pure-logic only — no Docker daemon, no WebSocket. Run with `make test` or
 
 from __future__ import annotations
 
+import io
 import os
 import queue
 import sys
@@ -16,8 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from agent.commands.container import ContainerCommands
 from agent.commands.fs import FsCommands
-from agent.commands.instance import _safe_slug
 from agent.commands.image import ImageCommands
+from agent.commands.instance import _safe_slug
 from agent.commands.postgres import PostgresCommands
 from agent.commands.system import SystemCommands
 from agent.gateway import (
@@ -54,14 +55,26 @@ def test_host_metrics_reports_only_aggregate_values(monkeypatch) -> None:
         f_frsize = 4096
         f_bavail = 25
 
+    real_open = open
+
+    def fake_open(path, *args, **kwargs):
+        # /proc/meminfo only exists on Linux; feed a fixed one so the test
+        # does not depend on the host it runs on.
+        if path == "/proc/meminfo":
+            return io.StringIO(
+                "MemTotal:        2048 kB\nMemAvailable:    1024 kB\n"
+            )
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", fake_open)
     monkeypatch.setattr(os, "statvfs", lambda _: FakeStat())
     monkeypatch.setattr(os, "getloadavg", lambda: (1.5, 0.0, 0.0))
     metrics = SystemCommands(FakeDocker()).metrics({})
     assert metrics["load1"] == 1.5
     assert metrics["disk_total_bytes"] == 409600
     assert metrics["disk_available_bytes"] == 102400
-    assert metrics["mem_total_bytes"] > 0
-    assert metrics["mem_available_bytes"] > 0
+    assert metrics["mem_total_bytes"] == 2048 * 1024
+    assert metrics["mem_available_bytes"] == 1024 * 1024
 
 
 def test_image_prune_enforces_seven_day_floor() -> None:
