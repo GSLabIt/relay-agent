@@ -85,69 +85,116 @@ class TenantDbCommands:
         n = _names(slug)
         pg_user = _ident(params["environment"]["POSTGRES_USER"], "user")
         mem_limit = params.get("mem_limit", "768m")
+        if docker.utils.parse_bytes(str(mem_limit)) > _MAX_MEM:
+            raise ValueError("mem_limit out of range")
         pids = int(params.get("pids_limit", 200))
         if not 1 <= pids <= 1000:
             raise ValueError("pids_limit out of range")
+        command = params.get("command") or []
+        if not command or command[0] != "postgres":
+            raise ValueError("Unexpected command")
+        image = params["image"]
+        if not str(image).startswith("postgres:"):
+            raise ValueError(f"Unexpected image: {image!r}")
 
         try:
-            net = self._docker.networks.get(n["network"])
+            self._docker.networks.get(n["network"])
         except docker.errors.NotFound:
-            net = self._docker.networks.create(
+            self._docker.networks.create(
                 n["network"], driver="bridge", internal=True
             )
-        del net
+        previous = None
         if params.get("recreate"):
-            with suppress(docker.errors.NotFound):
-                self._docker.containers.get(n["container"]).remove(force=True)
-        try:
-            container = self._docker.containers.get(n["container"])
-            created = False
-        except docker.errors.NotFound:
-            image = params["image"]
-            if not str(image).startswith("postgres:"):
-                raise ValueError(f"Unexpected image: {image!r}") from None
-            try:
-                if params.get("pull"):
-                    self._docker.images.pull(image)
-                else:
-                    self._docker.images.get(image)
-            except docker.errors.ImageNotFound:
+            if params.get("pull"):
+                # Fetch the replacement first: a failed pull must leave the
+                # running database alone.
                 self._docker.images.pull(image)
-            volumes = {
-                n["data"]: {"bind": "/var/lib/postgresql/data", "mode": "rw"},
-                n["scratch"]: {"bind": _SCRATCH, "mode": "rw"},
-            }
-            if params.get("wal_archiving"):
-                volumes[n["wal"]] = {"bind": "/wal_archive", "mode": "rw"}
-            container = self._docker.containers.create(
-                image=image,
-                name=n["container"],
-                command=list(params["command"]),
-                environment=params["environment"],
-                volumes=volumes,
-                network=n["network"],
-                labels={"berth.role": "tenant-db", "berth.slug": slug},
-                restart_policy={"Name": "unless-stopped"},
-                mem_limit=mem_limit,
-                pids_limit=pids,
-                cap_drop=["ALL"],
-                cap_add=_CAP_ADD,
-                security_opt=["no-new-privileges:true"],
+            previous = self._set_aside(n["container"])
+        try:
+            container, created = self._create_or_get(
+                slug, n, image, command, params, mem_limit, pids
             )
-            created = True
-        container.reload()
-        if container.status != "running":
-            container.start()
-        self._wait_ready(container, pg_user)
-        for mount in (_SCRATCH, "/wal_archive"):
-            if any(
-                m.get("Destination") == mount
-                for m in container.attrs.get("Mounts", [])
-            ):
-                container.exec_run(
-                    ["chown", "postgres:postgres", mount], user="root"
-                )
+            container.reload()
+            if container.status != "running":
+                container.start()
+            self._wait_ready(container, pg_user)
+            for mount in (_SCRATCH, "/wal_archive"):
+                if any(
+                    m.get("Destination") == mount
+                    for m in container.attrs.get("Mounts", [])
+                ):
+                    container.exec_run(
+                        ["chown", "postgres:postgres", mount], user="root"
+                    )
+        except Exception:
+            if previous is not None:
+                self._put_back(n["container"], previous)
+            raise
+        if previous is not None:
+            with suppress(docker.errors.NotFound):
+                previous.remove(force=True)
         return {"status": "created" if created else "ready"}
+
+    def _set_aside(self, name: str):
+        """Stop the running container and rename it out of the way, so a
+        failed replacement can be undone. None when there is none."""
+        import docker
+
+        with suppress(docker.errors.NotFound):
+            self._docker.containers.get(f"{name}_old").remove(force=True)
+        try:
+            current = self._docker.containers.get(name)
+        except docker.errors.NotFound:
+            return None
+        current.stop(timeout=30)
+        current.rename(f"{name}_old")
+        return current
+
+    def _put_back(self, name: str, previous) -> None:
+        import docker
+
+        with suppress(docker.errors.NotFound):
+            self._docker.containers.get(name).remove(force=True)
+        previous.rename(name)
+        previous.start()
+        logger.error("Restored the previous Postgres container %s", name)
+
+    def _create_or_get(self, slug, n, image, command, params, mem_limit, pids):
+        import docker
+
+        try:
+            return self._docker.containers.get(n["container"]), False
+        except docker.errors.NotFound:
+            pass
+        try:
+            if params.get("pull") and not params.get("recreate"):
+                self._docker.images.pull(image)
+            else:
+                self._docker.images.get(image)
+        except docker.errors.ImageNotFound:
+            self._docker.images.pull(image)
+        volumes = {
+            n["data"]: {"bind": "/var/lib/postgresql/data", "mode": "rw"},
+            n["scratch"]: {"bind": _SCRATCH, "mode": "rw"},
+        }
+        if params.get("wal_archiving"):
+            volumes[n["wal"]] = {"bind": "/wal_archive", "mode": "rw"}
+        container = self._docker.containers.create(
+            image=image,
+            name=n["container"],
+            command=list(command),
+            environment=params["environment"],
+            volumes=volumes,
+            network=n["network"],
+            labels={"berth.role": "tenant-db", "berth.slug": slug},
+            restart_policy={"Name": "unless-stopped"},
+            mem_limit=mem_limit,
+            pids_limit=pids,
+            cap_drop=["ALL"],
+            cap_add=_CAP_ADD,
+            security_opt=["no-new-privileges:true"],
+        )
+        return container, True
 
     @staticmethod
     def _wait_ready(container, pg_user: str) -> None:
@@ -316,6 +363,8 @@ class TenantDbCommands:
         if path != "/wal_archive" and not re.fullmatch(
             rf"{_SCRATCH}/[A-Za-z0-9_.-]+", path
         ):
+            raise ValueError(f"Path not exportable: {path!r}")
+        if path.rsplit("/", 1)[-1] in (".", ".."):
             raise ValueError(f"Path not exportable: {path!r}")
         name = _ident(params["name"], "name")
         container = self._container(slug)

@@ -8,6 +8,7 @@
 
 ### Fix
 
+- `berth.tenantdb.ensure` con `recreate`: scarica l'immagine prima di toccare il container in esecuzione e lo rimette a posto se il nuovo non parte; rifiuta comando/immagine/memoria inattesi. `export` rifiuta i segmenti `.`/`..`. `extra_networks` accetta solo le reti `berth_t_*` del tenant.
 - `berth.tenantdb.remove` scollega i container ancora collegati prima di rimuovere la rete del tenant (Docker rifiuta una rete con endpoint attivi).
 
 ## v0.19.0 (2026-10-01)

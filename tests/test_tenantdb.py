@@ -59,3 +59,60 @@ def test_ensure_only_accepts_postgres_images(tmp_path):
                 },
             }
         )
+
+
+def test_export_refuses_dot_segments(tmp_path):
+    commands = TenantDbCommands(object(), str(tmp_path))
+    for path in ("/scratch/..", "/scratch/."):
+        with pytest.raises(ValueError):
+            commands.export({"slug": "acme", "path": path, "name": "x"})
+
+
+def _ensure_params(**extra):
+    return {
+        "slug": "acme",
+        "image": "postgres:16",
+        "command": ["postgres"],
+        "environment": {"POSTGRES_USER": "postgres", "POSTGRES_PASSWORD": "x"},
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"command": ["sh", "-c", "id"]},
+        {"image": "alpine:3"},
+        {"mem_limit": "64g"},
+    ],
+)
+def test_ensure_refuses_unexpected_parameters_before_touching_docker(bad):
+    class NoDocker:
+        def __getattr__(self, name):
+            raise AssertionError("docker must not be touched")
+
+    with pytest.raises(ValueError):
+        TenantDbCommands(NoDocker(), "/x").ensure(_ensure_params(**bad))
+
+
+def test_failed_recreate_puts_the_previous_container_back(monkeypatch):
+    from unittest.mock import MagicMock
+
+    import docker
+
+    previous = MagicMock()
+    d = MagicMock()
+    d.networks.get.return_value = MagicMock()
+    d.containers.get.side_effect = [
+        docker.errors.NotFound("old"),  # stale _old
+        previous,  # the running container
+        docker.errors.NotFound("new"),  # nothing under the name yet
+        docker.errors.NotFound("new"),  # _put_back: nothing to remove
+    ]
+    d.containers.create.side_effect = RuntimeError("cannot create")
+    commands = TenantDbCommands(d, "/x")
+    with pytest.raises(RuntimeError):
+        commands.ensure(_ensure_params(recreate=True))
+    assert previous.rename.call_args_list[0].args[0] == "berth_pg_acme_old"
+    assert previous.rename.call_args_list[-1].args[0] == "berth_pg_acme"
+    previous.start.assert_called_once()

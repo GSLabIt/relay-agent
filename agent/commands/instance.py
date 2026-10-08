@@ -267,7 +267,7 @@ class InstanceCommands:
         extra_networks = [
             n
             for n in (params.get("extra_networks") or [])
-            if isinstance(n, str)
+            if isinstance(n, str) and n.startswith("berth_t_")
         ]
         if extra_networks:
             # Join the tenant's private database network before the first

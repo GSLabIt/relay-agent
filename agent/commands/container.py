@@ -107,7 +107,12 @@ class ContainerCommands:
                     "Pre-pull failed for %s: %s", image, redact(str(exc))
                 )
 
-        extra_networks = params.pop("extra_networks", None) or []
+        # Only a tenant's own private database network may be joined.
+        extra_networks = [
+            n
+            for n in (params.pop("extra_networks", None) or [])
+            if isinstance(n, str) and n.startswith("berth_t_")
+        ]
         run_kwargs: dict = {
             "detach": True,
             "volumes": volumes,
