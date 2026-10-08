@@ -476,6 +476,12 @@ async def _dispatch_message(
                     in {
                         "saas.postgres.enable_pitr",
                         "saas.postgres.retune",
+                        "saas.tenantdb.ensure",
+                        "saas.tenantdb.dump",
+                        "saas.tenantdb.restore",
+                        "berth.tenantdb.ensure",
+                        "berth.tenantdb.dump",
+                        "berth.tenantdb.restore",
                     }
                     else effective_timeout,
                     command_future,

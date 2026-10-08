@@ -1,5 +1,15 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Feat
+
+- **`berth.tenantdb.*`** — ciclo di vita del Postgres per tenant (ensure, start, stop, remove, status, dump, restore, export, cleanup) e `extra_networks` su `docker.container.run`/`berth.instance.provision`. I comandi `berth.instance.*` rinominano `saas.instance.*`; il relay accetta entrambi i prefissi.
+
+### Fix
+
+- `berth.tenantdb.remove` scollega i container ancora collegati prima di rimuovere la rete del tenant (Docker rifiuta una rete con endpoint attivi).
+
 ## v0.19.0 (2026-10-01)
 
 ### Feat
