@@ -160,6 +160,7 @@ class InstanceCommands:
             extra_hostnames=params.get("extra_hostnames"),
             cert_resolver=params.get("cert_resolver") or "letsencrypt",
             redirect_hostnames=params.get("redirect_hostnames"),
+            block_xmlrpc=bool(params.get("block_xmlrpc")),
         )
 
         # 7. Build environment
@@ -469,6 +470,7 @@ class InstanceCommands:
         extra_hostnames: list[str] | None = None,
         cert_resolver: str = "letsencrypt",
         redirect_hostnames: list[str] | None = None,
+        block_xmlrpc: bool = False,
     ) -> dict:
         host = hostname or f"{slug}.{domain}"
         all_hosts = list(dict.fromkeys([host, *(extra_hostnames or [])]))
@@ -492,6 +494,27 @@ class InstanceCommands:
             "saas.instance": slug,
             "saas.managed": "true",
         }
+        if block_xmlrpc:
+            # Per-instance opt-in from the control plane: 403 on /xmlrpc.
+            # Middleware declared as a label (the agent's Traefik has no
+            # file provider). A tunnel (token mode) can't be enforced here:
+            # its ingress is managed in Cloudflare, not locally.
+            x_router = f"{router}-xmlrpc"
+            x_mw = f"{router}-block-all"
+            labels[f"traefik.http.routers.{x_router}.rule"] = (
+                f"({rule}) && PathPrefix(`/xmlrpc`)"
+            )
+            labels[f"traefik.http.routers.{x_router}.entrypoints"] = "websecure"
+            labels[f"traefik.http.routers.{x_router}.tls"] = "true"
+            labels[f"traefik.http.routers.{x_router}.tls.certresolver"] = (
+                cert_resolver
+            )
+            labels[f"traefik.http.routers.{x_router}.priority"] = "20"
+            labels[f"traefik.http.routers.{x_router}.service"] = router
+            labels[f"traefik.http.routers.{x_router}.middlewares"] = x_mw
+            labels[
+                f"traefik.http.middlewares.{x_mw}.ipallowlist.sourcerange"
+            ] = "127.0.0.1/32"
         # Alias hostnames marked redirect_to_primary on the control plane
         # (InstanceAlias.redirect_to_primary) — 301 to the primary host
         # instead of being served. One router + one redirectregex
