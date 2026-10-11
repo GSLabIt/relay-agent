@@ -1,5 +1,11 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Feat
+
+- `berth.instance.provision` accetta `block_xmlrpc`: aggiunge il router Traefik `/xmlrpc` con ipAllowList loopback (403 dall'esterno), middleware dichiarato come label.
+
 ## v0.20.0 (2026-10-08)
 
 ### Feat
