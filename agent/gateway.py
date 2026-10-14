@@ -13,6 +13,8 @@ Protocol:
   Agent → Gateway (standard):
     {"type": "ready", "docker_version": "27.x"}
     {"type": "pong"}
+    {"type": "metrics", "samples": [{"slug": "...", "cpu_percent": ...}]}
+      (unsolicited, ~every 120s: docker stats of each app container)
     {"type": "response", "id": "uuid", "result": {...}}
     {"type": "response", "id": "uuid", "error": {"code": -1, "message": "..."}}
 
@@ -219,6 +221,25 @@ class _Session:
             await asyncio.gather(*list(self.tasks), return_exceptions=True)
 
 
+_METRICS_INTERVAL = 120.0
+
+
+async def _metrics_loop(ws, executor: Executor) -> None:
+    """Push a docker-stats snapshot of every app container to the control
+    plane every two minutes (no polling from the other side). Best-effort: a
+    failed collection or send just skips this tick."""
+    while True:
+        await asyncio.sleep(_METRICS_INTERVAL)
+        try:
+            samples = await asyncio.to_thread(executor.collect_metrics)
+            if samples:
+                await ws.send(_json({"type": "metrics", "samples": samples}))
+        except websockets.exceptions.ConnectionClosed:
+            return
+        except Exception as exc:
+            logger.warning("metrics push skipped (%s)", _redact(str(exc)))
+
+
 async def _handle_session(
     ws: websockets.WebSocketClientProtocol,
     executor: Executor,
@@ -226,6 +247,7 @@ async def _handle_session(
 ) -> None:
     """Handle a single connected session until the WebSocket closes."""
     sess = _Session()
+    sess.spawn(_metrics_loop(ws, executor))
     try:
         async for raw in ws:
             try:

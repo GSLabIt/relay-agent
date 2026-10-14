@@ -43,6 +43,9 @@ class Executor:
         except Exception:
             return "unknown"
 
+    def collect_metrics(self) -> list[dict]:
+        return self._container.metrics_samples()
+
     def container_exists(self, name_or_id: str) -> bool:
         try:
             container = self._docker.containers.get(name_or_id)

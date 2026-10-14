@@ -287,6 +287,24 @@ class ContainerCommands:
             ]
         }
 
+    def metrics_samples(self) -> list[dict]:
+        """Stats for every running app container (label saas.instance, no
+        saas.role — i.e. not the cloudflared sidecar), tagged with its slug.
+        A container whose stats call fails is skipped, never aborts the rest."""
+        samples: list[dict] = []
+        for c in self._docker.containers.list(
+            filters={"label": "saas.instance"}
+        ):
+            labels = c.labels or {}
+            if labels.get("saas.role"):
+                continue
+            try:
+                st = self.stats({"name_or_id": c.id})
+            except Exception:
+                continue
+            samples.append({"slug": labels["saas.instance"], **st})
+        return samples
+
     def exec_run(self, params: dict) -> dict:
         """Run a one-shot command inside a running container."""
         name_or_id = params["name_or_id"]
