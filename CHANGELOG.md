@@ -1,5 +1,11 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Feat
+
+- L'agent invia ogni 120s un messaggio `metrics` con le docker-stats dei container app (`saas.instance`, esclusi sidecar `saas.role`); il control-plane le usa per il tab Monitoring e gli alert senza polling.
+
 ## v0.21.0 (2026-10-11)
 
 ### Feat
