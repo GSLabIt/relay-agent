@@ -1,5 +1,11 @@
 <!-- markdownlint-disable MD024 MD041 -->
 
+## Unreleased
+
+### Fix
+
+- `berth.tenantdb.restore`: la voce `SCHEMA - public` dell'elenco di restore viene ignorata, così i dump legacy che contengono `CREATE SCHEMA public` non falliscono più con «schema "public" already exists».
+
 ## v0.22.0 (2026-10-14)
 
 ### Feat

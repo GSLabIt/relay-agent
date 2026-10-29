@@ -340,7 +340,7 @@ class TenantDbCommands:
                     "sh",
                     "-ec",
                     'cd "$SCRATCH"; '
-                    "pg_restore -l \"$FILE\" | grep -v ' EXTENSION ' "
+                    "pg_restore -l \"$FILE\" | grep -v -e ' EXTENSION ' -e ' SCHEMA - public ' "
                     '> "$LIST"; '
                     f'pg_restore -h 127.0.0.1 -U {owner} -d "$DB" --no-owner '
                     '--no-acl -L "$LIST" "$FILE"',
